@@ -30,12 +30,14 @@ window.makeParties = function(cfg){
       cfg.docs().filter(d => d[cfg.link] === id).forEach(d => {
         let extra = '';
         if (cfg.key === 'suppliers') extra = d.isReturn ? ' (استلمنا ' + DB.money(d.received || 0) + ')' : ' (دفعنا ' + DB.money(d.paid || 0) + ')';
-        rows.push({ date: d.date, t: (d.isReturn ? '↩️ مرتجع ' : cfg.docLabel + ' ') + DB.money(d.total) + extra });
+        rows.push({ date: d.date, doc: (cfg.key === 'suppliers' ? 'purchase:' : 'sale:') + d.id, t: (d.isReturn ? '↩️ مرتجع ' : cfg.docLabel + ' ') + DB.money(d.total) + extra });
       });
       DB.get(DB.K.payments, []).filter(p => p.party === id && p.kind === cfg.key).forEach(p =>
         rows.push({ date: p.date, t: '💵 ' + cfg.payDone + ' ' + DB.money(p.amount) }));
       rows.sort((a, b) => b.date.localeCompare(a.date));
-      return rows.slice(0, 30).map(r => `<div class="line"><div class="n">${new Date(r.date).toLocaleDateString('ar-EG')}<br>${r.t}</div></div>`).join('') || '<p>لا توجد عمليات بعد</p>';
+      return rows.slice(0, 30).map(r => r.doc
+        ? `<button type="button" class="docrow" data-doc="${r.doc}"><div class="dt"><span>${r.t}</span></div><div class="dm">${new Date(r.date).toLocaleDateString('ar-EG')} • اضغط لعرض التفاصيل</div></button>`
+        : `<div class="line"><div class="n">${new Date(r.date).toLocaleDateString('ar-EG')}<br>${r.t}</div></div>`).join('') || '<p>لا توجد عمليات بعد</p>';
     },
 
     detail(id){
@@ -50,6 +52,7 @@ window.makeParties = function(cfg){
         <h2>📜 كشف الحساب</h2>${this.ops(id)}
         <button class="btn gray" id="x">رجوع</button>`);
       m.querySelector('#x').onclick = () => m.close();
+      m.querySelectorAll('[data-doc]').forEach(b => b.onclick = () => { const [k, did] = b.dataset.doc.split(':'); UI.showDoc(k, did); });
       m.querySelector('#edit').onclick = () => { m.close(); this.form(x); };
       m.querySelector('#pay').onclick = () => this.pay(x, m);
     },

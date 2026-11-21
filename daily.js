@@ -34,8 +34,8 @@ Screens.daily = {
     const row = (l,v,c) => `<div class="line"><div class="n">${l}</div><b style="${c ? 'color:var(--' + c + ')' : ''}">${DB.money(v)}</b></div>`;
 
     const ops = [];
-    sales.forEach(s => ops.push({ d:s.date, v:s.total, t:(s.isReturn ? '↩️ مرتجع بيع ' : s.type === 'cash' ? '🛒 بيع نقدي ' : '📒 بيع آجل ') + (s.customerId ? '(' + nm('customers', s.customerId) + ')' : '') }));
-    purs.forEach(p => ops.push({ d:p.date, v:p.total, t:(p.isReturn ? '↩️ مرتجع شراء ' : '📥 شراء ') + (p.supplierId ? '(' + nm('suppliers', p.supplierId, p.supplierName) + ')' : (p.supplierName ? '(' + DB.esc(p.supplierName) + ')' : '')) }));
+    sales.forEach(s => ops.push({ k:'sale', id:s.id, d:s.date, v:s.total, t:(s.isReturn ? '↩️ مرتجع بيع ' : s.type === 'cash' ? '🛒 بيع نقدي ' : '📒 بيع آجل ') + (s.customerId ? '(' + nm('customers', s.customerId) + ')' : '') }));
+    purs.forEach(p => ops.push({ k:'purchase', id:p.id, d:p.date, v:p.total, t:(p.isReturn ? '↩️ مرتجع شراء ' : '📥 شراء ') + (p.supplierId ? '(' + nm('suppliers', p.supplierId, p.supplierName) + ')' : (p.supplierName ? '(' + DB.esc(p.supplierName) + ')' : '')) }));
     pays.forEach(p => ops.push({ d:p.date, v:p.amount, t: p.kind === 'customers' ? '💵 استلام من ' + nm('customers', p.party) : '💵 سداد إلى ' + nm('suppliers', p.party) }));
     ops.sort((a,b) => a.d.localeCompare(b.d));
 
@@ -57,8 +57,15 @@ Screens.daily = {
       <div class="box"><h2>💰 حركة الخزنة</h2>${row('داخل الخزنة', cin, 'ok')}${row('خارج الخزنة', cout, 'bad')}
         ${row('صافي حركة اليوم', cin - cout)}${row('الخزنة الآن', DB.getCash(), 'ok')}</div>
       <div class="box"><h2>📜 عمليات اليوم (${ops.length})</h2>
-        ${ops.map(o => `<div class="line"><div class="n">${new Date(o.d).toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' })} — ${o.t}</div><b>${DB.money(o.v)}</b></div>`).join('') || '<p class="big">لا توجد عمليات في هذا اليوم</p>'}</div>
+        ${ops.length ? '<p class="hint noprint">اضغط على أي فاتورة لعرض الأصناف والكميات والأسعار</p>' : ''}
+        ${ops.map(o => {
+          const tm = new Date(o.d).toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' });
+          return o.k
+            ? `<button type="button" class="docrow" data-doc="${o.k}:${o.id}"><div class="dt"><span>${tm} — ${o.t}</span><b>${DB.money(o.v)}</b></div></button>`
+            : `<div class="line"><div class="n">${tm} — ${o.t}</div><b>${DB.money(o.v)}</b></div>`;
+        }).join('') || '<p class="big">لا توجد عمليات في هذا اليوم</p>'}</div>
       <button class="btn noprint" onclick="window.print()">🖨️ طباعة الكشف</button>`;
+    el.querySelectorAll('[data-doc]').forEach(b => b.onclick = () => { const [k, id] = b.dataset.doc.split(':'); UI.showDoc(k, id); });
     document.getElementById('prev').onclick = () => this.shift(-1);
     document.getElementById('next').onclick = () => this.shift(1);
     document.getElementById('dt').onchange = e => { if (e.target.value){ this.day = e.target.value; this.render(el); } };
