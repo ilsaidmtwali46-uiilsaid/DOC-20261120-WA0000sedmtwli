@@ -54,14 +54,33 @@ const License = {
     return Math.ceil((this.info.exp - Date.now()) / 86400000);
   },
 
+  /* يرجع: true (تم) | false (مرفوض) | 'off' (كود تعطيل) | 'early' (الاشتراك لم يبدأ بعد) */
   async activate(code){
     code = this.clean(code);
     const info = await this.verify(code);
     if (!info) return false;
-    if (info.exp && Date.now() > info.exp) return false;   // كود منتهي لا يُقبل
+    // أي كود أقدم من آخر كود قُبل على هذا الجهاز يُرفض (يمنع الرجوع لكود قديم بعد تعطيل أو تعديل المدة)
+    const tt = Number(info.t) || 0;
+    const maxT = Number(localStorage.getItem(DB.K.licenseT) || 0);
+    if (tt < maxT) return false;
+
+    if (info.off){                                       // كود تعطيل من الإدارة
+      localStorage.setItem(DB.K.license, code);
+      localStorage.setItem(DB.K.licenseT, String(tt));
+      this.info = null;
+      this.show();
+      this.screen(window.afterLicense, 'off');
+      return 'off';
+    }
+    if (info.exp && Date.now() > info.exp) return false; // كود منتهي لا يُقبل
     this.mergeId(info);
     localStorage.setItem(DB.K.license, code);
+    localStorage.setItem(DB.K.licenseT, String(tt));
     this.info = info;
+    if (info.from && Date.now() < info.from){            // الاشتراك يبدأ في تاريخ لاحق
+      this.screen(window.afterLicense, 'early');
+      return 'early';
+    }
     this.show();
     this.warnIfExpiring();
     return true;
@@ -111,9 +130,11 @@ const License = {
     if (!raw) return this.screen(onOk, 'none');
     const info = await this.verify(raw);
     if (!info) return this.screen(onOk, 'invalid');
+    if (info.off){ this.info = null; return this.screen(onOk, 'off'); }
     if (info.exp && Date.now() > info.exp) return this.screen(onOk, 'exp');
     this.mergeId(info);
     this.info = info;
+    if (info.from && Date.now() < info.from) return this.screen(onOk, 'early');
     this.show();
     this.warnIfExpiring();
     return onOk();
@@ -126,15 +147,21 @@ const License = {
   },
 
   waLink(reason){
-    const msg = (reason === 'none' || reason === 'invalid' ? 'أرغب في تفعيل التطبيق' : 'أرغب في تجديد الاشتراك') +
-                '. رقم الجهاز: ' + this.deviceId();
+    const what = reason === 'none' || reason === 'invalid' ? 'أرغب في تفعيل التطبيق'
+               : reason === 'off' ? 'تم تعطيل اشتراكي وأرغب في الاستفسار'
+               : reason === 'early' ? 'أرغب في الاستفسار عن موعد بدء الاشتراك'
+               : 'أرغب في تجديد الاشتراك';
+    const msg = what + '. رقم الجهاز: ' + this.deviceId();
     return 'https://wa.me/201115197980?text=' + encodeURIComponent(msg);
   },
 
   screen(onOk, reason){
     const id = this.deviceId();
     const wa = this.waLink(reason);
+    const startTxt = this.info && this.info.from ? new Date(this.info.from).toLocaleDateString('ar-EG') : '';
     const titles = {
+      off: '⛔ تم تعطيل الاشتراك من الإدارة',
+      early: '⏳ الاشتراك لم يبدأ بعد' + (startTxt ? ' — يبدأ يوم ' + startTxt : ''),
       exp: '⏰ انتهت مدة الاشتراك',
       none: '🔒 التطبيق غير مفعّل على هذا الجهاز',
       invalid: '⚠️ كود التفعيل غير صالح أو لا يخص هذا الجهاز'
@@ -154,8 +181,9 @@ const License = {
     btn.onclick = async () => {
       btn.disabled = true;
       try {
-        if (await this.activate(document.getElementById('lic').value)) onOk();
-        else UI.toast('الكود غير صحيح أو منتهٍ أو لا يخص هذا الجهاز', true);
+        const r = await this.activate(document.getElementById('lic').value);
+        if (r === true) onOk();
+        else if (!r) UI.toast('الكود غير صحيح أو منتهٍ أو قديم أو لا يخص هذا الجهاز', true);
       } finally { btn.disabled = false; }
     };
   },
@@ -174,11 +202,14 @@ const License = {
       <button class="btn ok" id="go">تحديث</button><button class="btn gray" id="x">رجوع</button>`);
     m.querySelector('#x').onclick = () => m.close();
     m.querySelector('#go').onclick = async () => {
-      if (await this.activate(m.querySelector('#nl').value)){
+      const r = await this.activate(m.querySelector('#nl').value);
+      if (r === true){
         m.close(); UI.toast('تم التجديد ✔');
         if (window.afterLicense) window.afterLicense();
+      } else if (r){
+        m.close();                                   // off / early: شاشة الحالة ظهرت من activate
       } else {
-        UI.toast('الكود غير صحيح أو منتهٍ أو لا يخص هذا الجهاز', true);
+        UI.toast('الكود غير صحيح أو منتهٍ أو قديم أو لا يخص هذا الجهاز', true);
       }
     };
   }

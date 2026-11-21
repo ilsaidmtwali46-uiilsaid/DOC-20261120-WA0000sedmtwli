@@ -5,7 +5,7 @@ const DB = {
     suppliers:'gs_suppliers', customers:'gs_customers',
     draft:'gs_draft', payments:'gs_payments', stocktakes:'gs_stocktakes',
     theme:'gs_theme', license:'gs_license', licenseCheck:'gs_license_check',
-    licenseId:'gs_license_id',
+    licenseId:'gs_license_id', licenseT:'gs_license_t',
     device:'gs_device', lastBackup:'gs_last_backup', seenAt:'gs_seen_at'
   },
   _tx: null, _txFail: false,
@@ -93,7 +93,7 @@ const DB = {
   /* مفاتيح البيانات التي تدخل في النسخة الاحتياطية (بدون التفعيل ورقم الجهاز) */
   isDataKey(k){
     return typeof k === 'string' && k.startsWith('gs_') &&
-      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId;
+      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId && k !== this.K.licenseT;
   },
 
   exportBackup(){
