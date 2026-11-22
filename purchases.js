@@ -90,6 +90,12 @@ Screens.purchases = {
     this.drawCart();
   },
 
+  /* المرتجع يُخصم أولاً من ما علينا للمورد، وما يزيد يُستلم نقداً (بدل افتراض استلام كامل المبلغ نقداً) */
+  defPaid(t){
+    if (!this.ret) return t;
+    const s = this.supInfo(), owed = s ? Math.max(0, Number(s.balance) || 0) : 0;
+    return DB.round(Math.max(0, t - owed));
+  },
   supInfo(){ return DB.list('suppliers').find(x => x.id === this.supplierId) || null; },
   supName(){ const s = this.supInfo(); return s ? s.name : 'اضغط لاختيار المورد'; },
 
@@ -118,8 +124,9 @@ Screens.purchases = {
       <div class="total" id="tot"></div>
       <button class="btn gray" data-act="sup" id="supBtn">🚚 ${DB.esc(this.supName())}</button>
       ${s ? `<p class="big" style="font-size:.95rem">📞 ${DB.esc(s.phone || '—')} | 📍 ${DB.esc(s.address || '—')}</p>` : ''}
-      <label>${r ? 'المبلغ المستلم من المورد' : 'المبلغ المدفوع الآن'}</label>
+      <label>${r ? 'المبلغ المستلم نقداً من المورد' : 'المبلغ المدفوع الآن'}</label>
       <input class="inp" id="paid" type="number" inputmode="decimal" step="any">
+      ${r ? '<p class="hint">ℹ️ المرتجع يُخصم أولاً مما علينا للمورد، وما يزيد عن ذلك يُستلم نقداً وتزيد به الخزنة.</p>' : ''}
       <div class="hint" id="cashNote"></div>
       <div class="big" id="rem"></div>
       <button class="btn ${r ? 'warn' : 'ok'}" data-act="save">✅ ${r ? 'مراجعة وحفظ المرتجع' : 'مراجعة وحفظ الشراء'}</button>`;
@@ -128,9 +135,9 @@ Screens.purchases = {
   },
 
   drawTotals(){
-    const t = this.total(), paid = this.paid === null ? t : this.paid, rem = DB.round(t - paid);
+    const t = this.total(), paid = this.paid === null ? this.defPaid(t) : this.paid, rem = DB.round(t - paid);
     this.$('tot').textContent = DB.money(t);
-    if (this.paid === null) this.$('paid').value = t || '';
+    if (this.paid === null) this.$('paid').value = paid || '';
     this.$('rem').textContent = (this.ret ? 'يُخصم من حساب المورد: ' : 'الباقي للمورد: ') + DB.money(rem);
     const cn = this.$('cashNote');
     if (cn){
@@ -149,7 +156,7 @@ Screens.purchases = {
   pickSupplier(){
     const sups = DB.list('suppliers');
     const m = UI.modal(`<h2>اختر المورد</h2>
-      ${sups.map(s => `<button class="btn" data-s="${s.id}">${DB.esc(s.name)}<br><small>له علينا: ${DB.money(s.balance)} ${s.phone ? '— ' + DB.esc(s.phone) : ''}</small></button>`).join('')}
+      ${sups.map(s => `<button class="btn" data-s="${s.id}">${DB.esc(s.name)}<br><small>${UI.balText('suppliers', s.balance)} ${s.phone ? '— ' + DB.esc(s.phone) : ''}</small></button>`).join('')}
       <button class="btn gray" data-s="">بدون مورد (نقدي)</button>
       <h2>➕ مورد جديد</h2>
       <input class="inp" id="sn" placeholder="الاسم">
@@ -200,7 +207,7 @@ Screens.purchases = {
     if (!its.length) return UI.toast('الفاتورة فارغة', true);
     if (its.some(i => !(i.qty > 0))) return UI.toast('راجع الكميات', true);
     if (its.some(i => !(i.cost >= 0))) return UI.toast('راجع الأسعار', true);
-    const t = this.total(), paid = DB.round(this.paid === null ? t : this.paid);
+    const t = this.total(), paid = DB.round(this.paid === null ? this.defPaid(t) : this.paid);
     if (paid < 0) return UI.toast('المبلغ لا يمكن أن يكون سالبًا', true);
     if (paid > t) return UI.toast('المبلغ أكبر من إجمالي الفاتورة', true);
     if (paid < t && !this.supplierId) return UI.toast('اختر المورد لتسجيل الباقي عليه', true);
@@ -220,6 +227,7 @@ Screens.purchases = {
       [this.ret ? 'المستلم من المورد' : 'المدفوع الآن', DB.money(paid)]
     ];
     if (rem > 0 || this.ret) extra.push([this.ret ? 'يُخصم من حساب المورد' : 'الباقي للمورد', DB.money(rem), rem > 0 ? 'bad' : '']);
+    if (s){ const nb = DB.round((Number(s.balance) || 0) + (this.ret ? -rem : rem)); extra.push(['رصيد المورد بعد العملية', UI.balText('suppliers', nb), nb < 0 ? 'bad' : '']); }
     if (this.invoiceImg) extra.push(['صورة الفاتورة', 'مرفقة ✔']);
     UI.confirmInvoice({
       title: this.ret ? '↩️ مراجعة مرتجع الشراء' : '📥 مراجعة فاتورة الشراء',

@@ -207,6 +207,26 @@ const DB = {
     return !!(sales || purs || pays);
   },
 
+  /* آخر سطر بيع (غير مرتجع) لنفس الصنف: منه نأخذ سعر البيع وتكلفته عند الإرجاع */
+  lastSaleLine(productId){
+    const sales = this.list('sales');
+    for (let i = sales.length - 1; i >= 0; i--){
+      const s = sales[i];
+      if (s.isReturn) continue;
+      const l = (s.items || []).find(x => x.productId === productId);
+      if (l) return l;
+    }
+    return null;
+  },
+  /* صافي المباع من الصنف = كل المبيعات - كل المرتجعات المسجلة */
+  netSold(productId){
+    let n = 0;
+    this.list('sales').forEach(s => (s.items || []).forEach(l => {
+      if (l.productId === productId) n += (s.isReturn ? -1 : 1) * (Number(l.qty) || 0);
+    }));
+    return this.round(n);
+  },
+
   /* ============ المبيعات ============ */
   completeSale(items, type, customerId){
     return this.atomic(() => {
@@ -248,9 +268,14 @@ const DB = {
         if (!(qty > 0)) return { error: 'كمية غير صحيحة' };
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
+        // المرتجع يُسعَّر بسعر آخر بيع (أو بسعر كتبه المستخدم) وبتكلفة ذلك البيع، لا بالسعر الحالي
+        const last = this.lastSaleLine(p.id);
+        const hasPrice = it.price !== undefined && it.price !== null && it.price !== '' && Number(it.price) >= 0;
+        const price = hasPrice ? Number(it.price) : (last ? Number(last.price) : p.price);
+        const cost = last ? last.cost : p.buy;
         p.qty = this.round((Number(p.qty) || 0) + qty);
-        total += p.price * qty;
-        lines.push({ productId:p.id, code:p.code, name:p.name, qty, price:p.price, cost:p.buy });
+        total += price * qty;
+        lines.push({ productId:p.id, code:p.code, name:p.name, qty, price, cost });
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
