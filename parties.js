@@ -68,6 +68,7 @@ window.makeParties = function(cfg){
         const cur = this.all().find(i => i.id === x.id);
         if (!cur) return UI.toast('غير موجود', true);
         if (a > (Number(cur.balance) || 0)) return UI.toast('المبلغ أكبر من الرصيد', true);
+        if (cfg.cashSign < 0 && a > DB.getCash()) return UI.toast('رصيد الخزنة لا يكفي (المتاح ' + DB.money(DB.getCash()) + ')', true);
         const res = DB.atomic(() => {
           if (!DB.addBalance(cfg.key, x.id, -a)) return { error: 'تعذر تحديث الرصيد' };
           DB.addCash(cfg.cashSign * a);

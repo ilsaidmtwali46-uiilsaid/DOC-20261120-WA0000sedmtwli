@@ -120,6 +120,7 @@ Screens.purchases = {
       ${s ? `<p class="big" style="font-size:.95rem">📞 ${DB.esc(s.phone || '—')} | 📍 ${DB.esc(s.address || '—')}</p>` : ''}
       <label>${r ? 'المبلغ المستلم من المورد' : 'المبلغ المدفوع الآن'}</label>
       <input class="inp" id="paid" type="number" inputmode="decimal" step="any">
+      <div class="hint" id="cashNote"></div>
       <div class="big" id="rem"></div>
       <button class="btn ${r ? 'warn' : 'ok'}" data-act="save">✅ ${r ? 'مراجعة وحفظ المرتجع' : 'مراجعة وحفظ الشراء'}</button>`;
     if (this.paid !== null) this.$('paid').value = this.paid;
@@ -131,6 +132,13 @@ Screens.purchases = {
     this.$('tot').textContent = DB.money(t);
     if (this.paid === null) this.$('paid').value = t || '';
     this.$('rem').textContent = (this.ret ? 'يُخصم من حساب المورد: ' : 'الباقي للمورد: ') + DB.money(rem);
+    const cn = this.$('cashNote');
+    if (cn){
+      const low = !this.ret && paid > DB.getCash();
+      cn.textContent = '💰 رصيد الخزنة الآن: ' + DB.money(DB.getCash()) + (low ? ' — ⚠️ المدفوع أكبر من رصيد الخزنة' : '');
+      cn.style.color = low ? 'var(--bad)' : '';
+      cn.style.fontWeight = low ? '800' : '';
+    }
     Object.keys(this.cart).forEach(id => {
       const el = this.$('cart').querySelector('[data-lt="' + id + '"]');
       if (el) el.textContent = DB.money(this.cart[id].qty * this.cart[id].cost);
@@ -196,6 +204,7 @@ Screens.purchases = {
     if (paid < 0) return UI.toast('المبلغ لا يمكن أن يكون سالبًا', true);
     if (paid > t) return UI.toast('المبلغ أكبر من إجمالي الفاتورة', true);
     if (paid < t && !this.supplierId) return UI.toast('اختر المورد لتسجيل الباقي عليه', true);
+    if (!this.ret && paid > DB.getCash()) return UI.toast('رصيد الخزنة (' + DB.money(DB.getCash()) + ') لا يكفي — قلّل المدفوع واترك الباقي على المورد', true);
     if (this.ret && its.some(i => {
       const p = DB.getProduct(i.id);
       return !p || i.qty > p.qty;

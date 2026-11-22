@@ -1,5 +1,5 @@
 /* غيّر رقم الإصدار هنا عند كل تعديل على الملفات حتى يتحدث التطبيق عند المستخدمين */
-const CACHE = 'grocery-v10-20261121-c';
+const CACHE = 'grocery-v11-20261121-d';
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.json',
   'icon-192.png', 'icon-512.png',

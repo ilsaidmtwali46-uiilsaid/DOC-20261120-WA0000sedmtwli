@@ -245,6 +245,7 @@ const DB = {
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
+      if (type === 'cash' && total > this.getCash()) return { error: 'رصيد الخزنة لا يكفي لرد المبلغ (المتاح ' + this.money(this.getCash()) + ')' };
       this.save('products', prods);
       if (type === 'cash') this.addCash(-total);
       else this.addBalance('customers', customerId, -total);
@@ -280,6 +281,7 @@ const DB = {
       paid = this.round(paid);
       if (paid < 0 || paid > total) return { error: 'المبلغ المدفوع غير صحيح' };
       if (paid < total && !supplierId) return { error: 'اختر المورد لتسجيل الباقي عليه' };
+      if (paid > this.getCash()) return { error: 'رصيد الخزنة لا يكفي (المتاح ' + this.money(this.getCash()) + '). قلّل المبلغ المدفوع واترك الباقي على المورد.' };
       this.save('products', prods);
       this.addCash(-paid);
       if (supplierId) this.addBalance('suppliers', supplierId, total - paid);
