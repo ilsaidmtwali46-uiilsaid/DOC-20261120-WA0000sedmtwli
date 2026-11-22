@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
 
@@ -20,26 +20,29 @@
 
 <main id="app"></main>
 
-<footer class="footer">تصميم وتطوير: السيد متولي للبرمجة - واتساب: <bdi dir="ltr">&nbsp;01115197980</bdi></footer>
+<footer class="footer">تصميم وتطوير: السيد متولي للبرمجة - واتساب: <bdi dir="ltr">&nbsp;01115197980</bdi> <button type="button" class="verbtn" id="verBtn" onclick="Disk.panel()"></button></footer>
 
 <noscript><div class="box"><h1>⚠️ فعّل JavaScript لتشغيل التطبيق</h1></div></noscript>
 
-<script src="globals.js?v=11"></script>
-<script src="db.js?v=11"></script>
-<script src="license.js?v=11"></script>
-<script src="setup.js?v=11"></script>
-<script src="parties.js?v=11"></script>
-<script src="suppliers.js?v=11"></script>
-<script src="customers.js?v=11"></script>
-<script src="purchases.js?v=11"></script>
-<script src="inventory.js?v=11"></script>
-<script src="stocktake.js?v=11"></script>
-<script src="daily.js?v=11"></script>
-<script src="gallery.js?v=11"></script>
+<script src="globals.js?v=12"></script>
+<script src="db.js?v=12"></script>
+<script src="disk.js?v=12"></script>
+<script src="license.js?v=12"></script>
+<script src="setup.js?v=12"></script>
+<script src="parties.js?v=12"></script>
+<script src="suppliers.js?v=12"></script>
+<script src="customers.js?v=12"></script>
+<script src="purchases.js?v=12"></script>
+<script src="inventory.js?v=12"></script>
+<script src="stocktake.js?v=12"></script>
+<script src="daily.js?v=12"></script>
+<script src="gallery.js?v=12"></script>
 
 <script>
 // لو فشل تحميل globals.js نكمل بدون انهيار، وتظهر رسالة واضحة من boot()
 window.Screens = window.Screens || {};
+window.APP_VERSION = '12';
+(function(){ var b = document.getElementById('verBtn'); if (b) b.textContent = 'إصدار ' + window.APP_VERSION; })();
 
 // ===================== شاشة البيع =====================
 Screens.sale = {
@@ -194,6 +197,7 @@ function openQuick(screen, opts){
 Screens.home = {
   render(el){
     el.innerHTML = `
+      <button type="button" class="fs-chip" id="fsChip"></button>
       <div class="dashboard">
         <!-- العمود الأيمن -->
         <div class="dash-panel-right">
@@ -285,6 +289,7 @@ Screens.home = {
     };
 
     if (typeof License !== 'undefined') License.show();
+    if (typeof Disk !== 'undefined') Disk.chip();
   }
 };
 
@@ -329,6 +334,8 @@ function go(name){
 }
 
 function afterLicense(){
+  // أول تشغيل: اختيار مكان الحفظ على الجهاز، ثم نكمل الإعداد/الرئيسية
+  if (typeof Disk !== 'undefined' && !Disk._started){ Disk.start(afterLicense); return; }
   const app = document.getElementById('app');
   if (!DB.isSetupDone()) {
     Setup.render(app, afterLicense); return;
@@ -341,6 +348,7 @@ window.afterLicense = afterLicense;
 const MODULES = [
   ['globals.js',   () => window.UI && window.Screens && Object.keys(window.UI).length],
   ['db.js',        () => typeof DB !== 'undefined'],
+  ['disk.js',      () => typeof Disk !== 'undefined'],
   ['license.js',   () => typeof License !== 'undefined' && typeof License.gate === 'function'],
   ['setup.js',     () => typeof Setup !== 'undefined'],
   ['parties.js',   () => typeof window.makeParties === 'function'],

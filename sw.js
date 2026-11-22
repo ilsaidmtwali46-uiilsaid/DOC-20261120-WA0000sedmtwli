@@ -1,9 +1,9 @@
 /* غيّر رقم الإصدار هنا عند كل تعديل على الملفات حتى يتحدث التطبيق عند المستخدمين */
-const CACHE = 'grocery-v11-20261121-d';
+const CACHE = 'grocery-v12-20261122-a';
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.json',
   'icon-192.png', 'icon-512.png',
-  'globals.js', 'db.js', 'license.js', 'setup.js', 'parties.js',
+  'globals.js', 'db.js', 'disk.js', 'license.js', 'setup.js', 'parties.js',
   'suppliers.js', 'customers.js', 'purchases.js', 'inventory.js',
   'stocktake.js', 'daily.js', 'gallery.js'
 ];

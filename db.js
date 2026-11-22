@@ -19,6 +19,7 @@ const DB = {
       if (this._tx && !(k in this._tx)) this._tx[k] = localStorage.getItem(k);
       localStorage.setItem(k, JSON.stringify(v));
       this.checkStorageDebounced();
+      if (window.Disk && this.isDataKey(k)) Disk.touch();
       return true;
     } catch(e){
       if (this._tx) this._txFail = true;           // داخل عملية: نتراجع ونعرض رسالة واحدة من الشاشة
@@ -93,10 +94,11 @@ const DB = {
   /* مفاتيح البيانات التي تدخل في النسخة الاحتياطية (بدون التفعيل ورقم الجهاز) */
   isDataKey(k){
     return typeof k === 'string' && k.startsWith('gs_') &&
-      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId && k !== this.K.licenseT;
+      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId && k !== this.K.licenseT && !k.startsWith('gs_fs_');
   },
 
-  exportBackup(){
+  /* لقطة كاملة من بيانات المحل (تُستخدم في النسخة الاحتياطية والحفظ على الجهاز) */
+  snapshot(){
     const data = {};
     for (let i = 0; i < localStorage.length; i++){
       const k = localStorage.key(i);
@@ -105,7 +107,11 @@ const DB = {
         catch(e){ data[k] = localStorage.getItem(k); }
       }
     }
-    const blob = new Blob([JSON.stringify({v:1, at:new Date().toISOString(), data}, null, 2)], {type:'application/json'});
+    return { v:1, at:new Date().toISOString(), data };
+  },
+
+  exportBackup(){
+    const blob = new Blob([JSON.stringify(this.snapshot(), null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const d = new Date();
@@ -120,15 +126,11 @@ const DB = {
     if (window.UI) UI.toast('تم تجهيز النسخة الاحتياطية ✔');
   },
 
-  async importBackup(file){
-    const text = await file.text();
-    const obj = JSON.parse(text);
+  /* استبدال كل بيانات المحل بمحتوى نسخة (مع التراجع لو فشل الحفظ) */
+  restoreObject(obj){
     if (!obj || obj.v !== 1 || !obj.data || typeof obj.data !== 'object') throw new Error('ملف غير صالح');
     const keys = Object.keys(obj.data).filter(k => this.isDataKey(k));
     if (!keys.length) throw new Error('ملف غير صالح');
-    if (!await UI.confirm('سيتم استبدال كل البيانات الحالية. متأكد؟', 'نعم، استعد', 'إلغاء')) return false;
-
-    // نحفظ الحالية للتراجع لو فشلت الاستعادة، ثم نمسحها كلها حتى لا يختلط القديم بالجديد
     const old = {};
     for (let i = 0; i < localStorage.length; i++){
       const k = localStorage.key(i);
@@ -143,6 +145,13 @@ const DB = {
       throw new Error('full');
     }
     return true;
+  },
+
+  async importBackup(file){
+    const obj = JSON.parse(await file.text());
+    if (!obj || obj.v !== 1 || !obj.data || typeof obj.data !== 'object') throw new Error('ملف غير صالح');
+    if (!await UI.confirm('سيتم استبدال كل البيانات الحالية. متأكد؟', 'نعم، استعد', 'إلغاء')) return false;
+    return this.restoreObject(obj);
   },
 
   isSetupDone(){ return this.get(this.K.setup, false) === true; },
