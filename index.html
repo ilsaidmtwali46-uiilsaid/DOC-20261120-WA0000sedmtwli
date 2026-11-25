@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 
@@ -24,32 +24,35 @@
 
 <noscript><div class="box"><h1>⚠️ فعّل JavaScript لتشغيل التطبيق</h1></div></noscript>
 
-<script src="globals.js?v=13"></script>
-<script src="db.js?v=13"></script>
-<script src="disk.js?v=13"></script>
-<script src="license.js?v=13"></script>
-<script src="setup.js?v=13"></script>
-<script src="parties.js?v=13"></script>
-<script src="suppliers.js?v=13"></script>
-<script src="customers.js?v=13"></script>
-<script src="purchases.js?v=13"></script>
-<script src="inventory.js?v=13"></script>
-<script src="stocktake.js?v=13"></script>
-<script src="daily.js?v=13"></script>
-<script src="gallery.js?v=13"></script>
+<script src="globals.js?v=14"></script>
+<script src="db.js?v=14"></script>
+<script src="disk.js?v=14"></script>
+<script src="license.js?v=14"></script>
+<script src="setup.js?v=14"></script>
+<script src="parties.js?v=14"></script>
+<script src="suppliers.js?v=14"></script>
+<script src="customers.js?v=14"></script>
+<script src="purchases.js?v=14"></script>
+<script src="inventory.js?v=14"></script>
+<script src="stocktake.js?v=14"></script>
+<script src="daily.js?v=14"></script>
+<script src="gallery.js?v=14"></script>
 
 <script>
 // لو فشل تحميل globals.js نكمل بدون انهيار، وتظهر رسالة واضحة من boot()
 window.Screens = window.Screens || {};
-window.APP_VERSION = '13';
+window.APP_VERSION = '14';
 (function(){ var b = document.getElementById('verBtn'); if (b) b.textContent = 'إصدار ' + window.APP_VERSION; })();
 
 // ===================== شاشة البيع =====================
 Screens.sale = {
-  cart: {}, rp: {}, q: '', ret: false, _busy: false,
+  cart: {}, rp: {}, q: '', ret: false, customerId: null, _busy: false,
+  custInfo(){ return DB.list('customers').find(x => x.id === this.customerId) || null; },
+  custName(){ const c = this.custInfo(); return c ? c.name : 'اضغط لاختيار أو إضافة عميل'; },
   prune(){
     const ids = new Set(DB.list('products').map(p => p.id));
     Object.keys(this.cart).forEach(id => { if (!ids.has(id)) { delete this.cart[id]; delete this.rp[id]; } });
+    if (this.customerId && !this.custInfo()) this.customerId = null;
   },
   /* سعر الإرجاع الافتراضي = سعر آخر بيع للصنف (وليس السعر الحالي)، ويمكن للمستخدم تعديله */
   retPrice(id){
@@ -82,6 +85,7 @@ Screens.sale = {
         this.drawCart();
       }
       else if (a === 'del') { delete this.cart[id]; delete this.rp[id]; UI.mark(document.getElementById('grid'), id, 0); this.drawCart(); }
+      else if (a === 'cust') this.pickCustomer();
       else if (a === 'top') { const q = document.getElementById('q'); if (q && q.scrollIntoView) q.scrollIntoView({ behavior:'smooth', block:'center' }); }
       else if (a === 'cash') this.cash();
       else if (a === 'credit') this.credit();
@@ -91,6 +95,30 @@ Screens.sale = {
       if (t.dataset.rp && this.cart[t.dataset.rp] !== undefined){ this.rp[t.dataset.rp] = t.value; this.refreshTotals(); }
     };
     this.drawGrid(); this.drawCart();
+  },
+  pickCustomer(){
+    const custs = DB.list('customers');
+    const m = UI.modal(`<h2>👤 اختر العميل</h2>
+      ${custs.length ? custs.map(c => `<button class="btn" data-c="${c.id}">${DB.esc(c.name)}<br><small>${UI.balText('customers', c.balance)} ${c.phone ? '— ' + DB.esc(c.phone) : ''}</small></button>`).join('') : '<p class="hint">لا يوجد عملاء مسجلون بعد — أضف عميلاً جديداً بالأسفل</p>'}
+      <h2>➕ إضافة عميل جديد</h2>
+      <input class="inp" id="cn" placeholder="اسم العميل (إلزامي)">
+      <input class="inp" id="cp" type="tel" placeholder="رقم الهاتف">
+      <input class="inp" id="ca" placeholder="العنوان">
+      <button class="btn ok" id="cadd">💾 حفظ واختيار العميل</button>
+      <button class="btn gray" id="cx">رجوع</button>`);
+    const pick = id => { this.customerId = id || null; m.close(); this.drawCart(); };
+    m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => pick(b.dataset.c));
+    m.querySelector('#cx').onclick = () => m.close();
+    m.querySelector('#cadd').onclick = () => {
+      const n = m.querySelector('#cn').value.trim();
+      if (!n) return UI.toast('اكتب اسم العميل', true);
+      pick(DB.addCustomer({
+        name:n,
+        phone:m.querySelector('#cp').value.trim(),
+        address:m.querySelector('#ca').value.trim(),
+        balance:0, notes:''
+      }).id);
+    };
   },
   drawGrid(){
     const q = this.q.trim().toLowerCase();
@@ -117,7 +145,7 @@ Screens.sale = {
     UI.cartBar.set({ count: Object.keys(this.cart).length, total: t, label: this.ret ? '↩️ عرض المرتجع والحفظ' : '🧾 عرض الفاتورة والحفظ' });
   },
   drawCart(){
-    const ids = Object.keys(this.cart), r = this.ret;
+    const ids = Object.keys(this.cart), r = this.ret, c = this.custInfo();
     const rows = ids.map(id => {
       const p = DB.getProduct(id), q = this.cart[id];
       const sub = r
@@ -142,6 +170,11 @@ Screens.sale = {
     document.getElementById('retBtn').textContent = r ? '🛒 رجوع للبيع العادي' : '↩️ مرتجع بيع';
     cart.innerHTML = `<div class="cart-head"><h2>${r ? '↩️ فاتورة مرتجع' : '🧺 الفاتورة'}</h2>
         ${ids.length ? '<button type="button" data-act="top">⬆️ إضافة أصناف</button>' : ''}</div>
+      <div class="box" style="margin:0 0 10px 0;padding:10px">
+        <label style="margin-top:0">👤 العميل (اختيار أو إضافة عميل)</label>
+        <button type="button" class="btn ${c ? 'ok' : 'gray'}" data-act="cust" id="custBtn" style="margin:4px 0">👤 ${DB.esc(this.custName())}</button>
+        ${c ? `<p class="big" style="font-size:.95rem;margin:4px 0 0">${UI.balText('customers', c.balance)} ${c.phone ? ' | 📞 ' + DB.esc(c.phone) : ''}</p>` : ''}
+      </div>
       ${rows || '<p class="big">اضغط على صورة الصنف لإضافته</p>'}
       <div class="total" id="stot"></div>
       ${r ? `<p class="hint">💰 رصيد الخزنة الآن: ${DB.money(DB.getCash())} — الرد النقدي لا يتجاوز رصيد الخزنة</p>` : ''}
@@ -149,7 +182,7 @@ Screens.sale = {
       <button class="btn" data-act="credit">${r ? '📒 مراجعة وخصم من حساب عميل' : '📒 مراجعة وبيع آجل'}</button>`;
     this.refreshTotals();
   },
-  done(msg){ this.cart = {}; this.rp = {}; this.drawCart(); this.drawGrid(); UI.toast(msg); },
+  done(msg){ this.cart = {}; this.rp = {}; this.customerId = null; this.drawCart(); this.drawGrid(); UI.toast(msg); },
 
   /* شاشة مراجعة الفاتورة قبل الحفظ النهائي: كل صنف بكميته وسعره وإجماليه + تحذيرات المرتجع */
   review(type, cust){
@@ -162,7 +195,10 @@ Screens.sale = {
     });
     let extra;
     if (type === 'cash'){
-      extra = [['طريقة الدفع', r ? 'رد نقدي من الخزنة' : 'نقدي — يدخل الخزنة']];
+      extra = [
+        ['العميل', cust ? cust.name : '—'],
+        ['طريقة الدفع', r ? 'رد نقدي من الخزنة' : 'نقدي — يدخل الخزنة']
+      ];
       if (r) extra.push(['رصيد الخزنة بعد الرد', DB.money(DB.round(DB.getCash() - total))]);
     } else {
       extra = [['العميل', cust ? cust.name : '—'], [r ? 'يُخصم من حسابه' : 'يُضاف على حسابه', DB.money(total), 'bad']];
@@ -177,44 +213,39 @@ Screens.sale = {
   },
   async cash(){
     if (!this.items().length) return UI.toast('الفاتورة فارغة', true);
+    if (!this.customerId) return UI.toast('يجب اختيار العميل أو إضافة عميل جديد أولاً', true);
     if (this._busy) return;
     if (this.ret && this.total() > DB.getCash()) return UI.toast('رصيد الخزنة (' + DB.money(DB.getCash()) + ') لا يكفي لرد المبلغ — اختر الخصم من حساب عميل أو عدّل السعر', true);
-    if (!(await this.review('cash'))) return;
+    const cust = this.custInfo();
+    if (!(await this.review('cash', cust))) return;
     this._busy = true;
     try {
-      const r = this.ret ? DB.returnSale(this.items(), 'cash') : DB.completeSale(this.items(), 'cash');
+      const meta = { customerName: cust ? cust.name : '', customerPhone: cust ? cust.phone : '' };
+      const r = this.ret
+        ? DB.returnSale(this.items(), 'cash', this.customerId, meta)
+        : DB.completeSale(this.items(), 'cash', this.customerId, meta);
       if (r.error) return UI.toast(r.error, true);
       this.done(this.ret ? 'تم حفظ المرتجع ✔' : 'تم حفظ الفاتورة نهائياً ✔');
     } finally { this._busy = false; }
   },
-  credit(){
+  async credit(){
     if (!this.items().length) return UI.toast('الفاتورة فارغة', true);
-    const custs = DB.list('customers');
-    const m = UI.modal(`<h2>اختر العميل</h2>
-      ${custs.map(c => `<button class="btn" data-c="${c.id}">${DB.esc(c.name)}<br><small>${UI.balText('customers', c.balance)}</small></button>`).join('')}
-      <h2>➕ عميل جديد</h2>
-      <input class="inp" id="cn" placeholder="الاسم"><input class="inp" id="cp" type="tel" placeholder="رقم الهاتف">
-      <button class="btn ok" id="cadd">متابعة للمراجعة</button><button class="btn gray" id="cx">رجوع</button>`);
-    /* who: {id} لعميل موجود أو {name, phone} لعميل جديد (لا يُحفظ إلا بعد تأكيد الفاتورة) */
-    const sell = async who => {
-      if (this._busy) return;
-      const cust = who.id ? custs.find(c => c.id === who.id) : { name: who.name, balance: 0 };
-      if (!(await this.review('credit', cust))) return;      // رجوع للتعديل: تبقى قائمة العملاء مفتوحة
-      this._busy = true;
-      try {
-        const id = who.id || DB.addCustomer({ name:who.name, phone:who.phone, address:'', balance:0, notes:'' }).id;
-        const r = this.ret ? DB.returnSale(this.items(), 'credit', id) : DB.completeSale(this.items(), 'credit', id);
-        if (r.error) return UI.toast(r.error, true);
-        m.close(); this.done(this.ret ? 'تم الخصم من حساب العميل ✔' : 'تم حفظ البيع الآجل ✔');
-      } finally { this._busy = false; }
-    };
-    m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => sell({ id: b.dataset.c }));
-    m.querySelector('#cx').onclick = () => m.close();
-    m.querySelector('#cadd').onclick = () => {
-      const n = m.querySelector('#cn').value.trim();
-      if (!n) return UI.toast('اكتب اسم العميل', true);
-      sell({ name:n, phone:m.querySelector('#cp').value.trim() });
-    };
+    if (!this.customerId){
+      this.pickCustomer();
+      return UI.toast('اختر العميل أو أضف عميلاً جديداً أولاً', true);
+    }
+    if (this._busy) return;
+    const cust = this.custInfo();
+    if (!(await this.review('credit', cust))) return;
+    this._busy = true;
+    try {
+      const meta = { customerName: cust ? cust.name : '', customerPhone: cust ? cust.phone : '' };
+      const r = this.ret
+        ? DB.returnSale(this.items(), 'credit', this.customerId, meta)
+        : DB.completeSale(this.items(), 'credit', this.customerId, meta);
+      if (r.error) return UI.toast(r.error, true);
+      this.done(this.ret ? 'تم الخصم من حساب العميل ✔' : 'تم حفظ البيع الآجل ✔');
+    } finally { this._busy = false; }
   }
 };
 

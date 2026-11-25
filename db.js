@@ -207,7 +207,6 @@ const DB = {
     return !!(sales || purs || pays);
   },
 
-  /* آخر سطر بيع (غير مرتجع) لنفس الصنف: منه نأخذ سعر البيع وتكلفته عند الإرجاع */
   lastSaleLine(productId){
     const sales = this.list('sales');
     for (let i = sales.length - 1; i >= 0; i--){
@@ -218,7 +217,6 @@ const DB = {
     }
     return null;
   },
-  /* صافي المباع من الصنف = كل المبيعات - كل المرتجعات المسجلة */
   netSold(productId){
     let n = 0;
     this.list('sales').forEach(s => (s.items || []).forEach(l => {
@@ -251,7 +249,8 @@ const DB = {
       if (type === 'cash') this.addCash(total);
       else this.addBalance('customers', customerId, total);
       const sales = this.list('sales');
-      const sale = { id:this.newId('sale'), date:new Date().toISOString(), type, customerId:customerId||null, items:lines, total };
+      const sale = Object.assign({ id:this.newId('sale'), date:new Date().toISOString(), type, customerId:customerId||null, items:lines, total }, (typeof type === 'object' ? {} : {}));
+      if (arguments[3] && typeof arguments[3] === 'object') Object.assign(sale, arguments[3]);
       sales.push(sale); this.save('sales', sales);
       return { sale };
     });
@@ -268,7 +267,6 @@ const DB = {
         if (!(qty > 0)) return { error: 'كمية غير صحيحة' };
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
-        // المرتجع يُسعَّر بسعر آخر بيع (أو بسعر كتبه المستخدم) وبتكلفة ذلك البيع، لا بالسعر الحالي
         const last = this.lastSaleLine(p.id);
         const hasPrice = it.price !== undefined && it.price !== null && it.price !== '' && Number(it.price) >= 0;
         const price = hasPrice ? Number(it.price) : (last ? Number(last.price) : p.price);
@@ -285,6 +283,7 @@ const DB = {
       else this.addBalance('customers', customerId, -total);
       const a = this.list('sales');
       const r = { id:this.newId('ret'), date:new Date().toISOString(), isReturn:true, type, customerId:customerId||null, items:lines, total };
+      if (arguments[3] && typeof arguments[3] === 'object') Object.assign(r, arguments[3]);
       a.push(r); this.save('sales', a);
       return { sale: r };
     });
@@ -341,9 +340,10 @@ const DB = {
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
         if ((Number(p.qty) || 0) < qty) return { error: 'كمية المرتجع أكبر من الموجود: ' + p.name };
+        const buyPrice = it.buyPrice !== undefined ? Number(it.buyPrice) : (Number(p.buy) || 0);
         p.qty = this.round((Number(p.qty) || 0) - qty);
         total += cost * qty;
-        lines.push({ productId:p.id, name:p.name, qty, cost });
+        lines.push({ productId:p.id, name:p.name, qty, cost, buyPrice });
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
