@@ -262,11 +262,11 @@ const DB = {
       if (type !== 'cash' && rem > 0) this.addBalance('customers', customerId, rem);
 
       const sales = this.list('sales');
-      const sale = Object.assign({
+      const sale = Object.assign({}, m, {
         id:this.newId('sale'), date:new Date().toISOString(),
         type, customerId:customerId||null, items:lines, total,
         paid: paidNow, remaining: rem
-      }, m);
+      });
       sales.push(sale); this.save('sales', sales);
       return { sale };
     });
@@ -278,15 +278,21 @@ const DB = {
       if (type !== 'cash' && !this.list('customers').some(c => c.id === customerId)) return { error: 'العميل غير موجود' };
       if (customerId){
         const sales = this.list('sales');
-        const soldIds = new Set();
-        sales.filter(s => !s.isReturn && s.customerId === customerId)
-             .forEach(s => (s.items || []).forEach(i => soldIds.add(i.productId)));
-        const notOwned = items.filter(it => !soldIds.has(it.id)).map(it => {
-          const p = this.getProduct(it.id);
-          return p ? p.name : it.id;
+        const soldQty = new Map();
+        sales.filter(s => s.customerId === customerId).forEach(s => {
+          const sign = s.isReturn ? -1 : 1;
+          (s.items || []).forEach(i => {
+            soldQty.set(i.productId, (soldQty.get(i.productId) || 0) + sign * (Number(i.qty) || 0));
+          });
         });
-        if (notOwned.length){
-          return { error: 'هذه الأصناف لم تُبع لهذا العميل: ' + notOwned.join('، ') };
+        const requestedQty = new Map();
+        items.forEach(it => requestedQty.set(it.id, (requestedQty.get(it.id) || 0) + (Number(it.qty) || 0)));
+        for (const [productId, qty] of requestedQty){
+          const available = this.round(soldQty.get(productId) || 0);
+          if (!(qty > 0) || qty > available){
+            const p = this.getProduct(productId);
+            return { error: 'كمية المرتجع أكبر من صافي المباع لهذا العميل: ' + (p ? p.name : productId) };
+          }
         }
       }
       const prods = this.list('products');
@@ -314,10 +320,10 @@ const DB = {
       if (type === 'cash') this.addCash(-total);
       else this.addBalance('customers', customerId, -total);
       const a = this.list('sales');
-      const r = Object.assign({
+      const r = Object.assign({}, meta || {}, {
         id:this.newId('ret'), date:new Date().toISOString(),
         isReturn:true, type, customerId:customerId||null, items:lines, total
-      }, meta || {});
+      });
       a.push(r); this.save('sales', a);
       return { sale: r };
     });
@@ -347,15 +353,16 @@ const DB = {
       paid = this.round(paid);
       if (paid < 0 || paid > total) return { error: 'المبلغ المدفوع غير صحيح' };
       if (paid < total && !supplierId) return { error: 'اختر المورد لتسجيل الباقي عليه' };
+      if (meta && meta.paymentPlan === 'cash' && paid !== total) return { error: 'الشراء النقدي يتطلب سداد إجمالي الفاتورة' };
       if (paid > this.getCash()) return { error: 'رصيد الخزنة لا يكفي.' };
       this.save('products', prods);
       if (paid > 0) this.addCash(-paid);
       if (supplierId) this.addBalance('suppliers', supplierId, total - paid);
       const a = this.list('purchases');
-      const pur = Object.assign({
+      const pur = Object.assign({}, meta || {}, {
         id:this.newId('pur'), date:new Date().toISOString(),
         supplierId:supplierId||null, items:lines, total, paid, received:0
-      }, meta || {});
+      });
       a.push(pur); this.save('purchases', a);
       return { purchase: pur };
     });
@@ -388,11 +395,11 @@ const DB = {
       if (received > 0) this.addCash(received);
       if (supplierId) this.addBalance('suppliers', supplierId, -(total - received));
       const a = this.list('purchases');
-      const r = Object.assign({
+      const r = Object.assign({}, meta || {}, {
         id:this.newId('pret'), date:new Date().toISOString(),
         isReturn:true, supplierId:supplierId||null, items:lines,
         total, received
-      }, meta || {});
+      });
       a.push(r); this.save('purchases', a);
       return { purchase: r };
     });
