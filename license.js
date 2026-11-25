@@ -2,7 +2,6 @@ const License = {
   PUBLIC_KEY:{"kty":"EC","crv":"P-256","x":"JPiLhZfTREyfi47bilILNM50L24xGA88AgLPLot2z0M","y":"aL9Mqq68V-Mw0TBPCg0zg3QgTusGky_yFEsdv2v3WhA"},
   info: null,
 
-  /* فك base64url (مع إضافة الحشو المفقود) */
   dec(s){
     s = String(s).replace(/-/g,'+').replace(/_/g,'/');
     while (s.length % 4) s += '=';
@@ -11,7 +10,6 @@ const License = {
   clean(code){ return String(code == null ? '' : code).replace(/\s+/g, ''); },
   hasCrypto(){ return !!(window.crypto && crypto.subtle && crypto.getRandomValues); },
 
-  /* كود تعريف جهاز فريد وثابت لكل جهاز لا يتكرر على نفس الجهاز ولا يتطابق مع جهاز آخر */
   deviceId(){
     let d = localStorage.getItem(DB.K.device);
     if (!d){
@@ -61,7 +59,6 @@ const License = {
     return this.saveRequesterInfo(act, mgr, phn);
   },
 
-  /* التحقق من توقيع ECDSA P-256 ومن مطابقة رقم الجهاز */
   async verify(token){
     try {
       if (!this.PUBLIC_KEY || !this.hasCrypto()) return null;
@@ -75,7 +72,6 @@ const License = {
     } catch(e){ return null; }
   },
 
-  /* حفظ/استرجاع (المحل - النشاط - المستخدم) حتى لو كود التجديد لا يحملها */
   mergeId(info){
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem(DB.K.licenseId) || '{}') || {}; } catch(_){ saved = {}; }
@@ -92,7 +88,6 @@ const License = {
     return Math.ceil((this.info.exp - Date.now()) / 86400000);
   },
 
-  /* يرجع: true (تم) | false (مرفوض) | 'off' (كود تعطيل) | 'early' (الاشتراك لم يبدأ بعد) */
   async activate(code){
     code = this.clean(code);
     const info = await this.verify(code);
@@ -134,21 +129,21 @@ const License = {
     const shopName = (this.info.s && this.info.s !== activityName) ? this.info.s : '';
     const dl = this.daysLeft();
     const meta = [];
-    if (shopName) meta.push('🏪 ' + DB.esc(shopName));
-    if (this.info.u) meta.push('👤 ' + DB.esc(this.info.u));
-    if (dl === null) meta.push('♾️ اشتراك مفتوح');
+    if (shopName) meta.push(DB.esc(shopName));
+    if (this.info.u) meta.push(DB.esc(this.info.u));
+    if (dl === null) meta.push('اشتراك مفتوح');
     else if (dl >= 0){
       const end = new Date(this.info.exp).toLocaleDateString('ar-EG');
-      meta.push('⏳ متبقي ' + dl + ' يوم (حتى ' + end + ')');
-    } else meta.push('⛔ الاشتراك منتهٍ');
-    el.innerHTML = `<div class="scroll-main-title">${DB.esc(activityName)}</div>` +
-      `<div class="scroll-meta">${meta.map(m => `<span class="scroll-sub-title">${m}</span>`).join('')}</div>`;
+      meta.push('متبقي ' + dl + ' يوم (حتى ' + end + ')');
+    } else meta.push('الاشتراك منتهٍ');
+    el.innerHTML = '<div class="scroll-main-title">' + DB.esc(activityName) + '</div>' +
+      '<div class="scroll-meta">' + meta.map(m => '<span class="scroll-sub-title">' + m + '</span>').join('') + '</div>';
   },
 
   warnIfExpiring(){
     const dl = this.daysLeft();
     if (dl !== null && dl >= 0 && dl <= 3){
-      setTimeout(() => UI.toast('⚠️ ينتهي الاشتراك بعد ' + dl + ' يوم — جدد الآن', true), 800);
+      setTimeout(() => UI.toast('ينتهي الاشتراك بعد ' + dl + ' يوم — جدد الآن', true), 800);
     }
   },
 
@@ -176,9 +171,9 @@ const License = {
   },
 
   noCrypto(){
-    document.getElementById('app').innerHTML = `<div class="box">
-      <h1>⚠️ المتصفح لا يدعم التفعيل</h1>
-      <p class="big">افتح التطبيق من الرابط الآمن (https) وبمتصفح حديث مثل Chrome أو Safari.</p></div>`;
+    document.getElementById('app').innerHTML = '<div class="box">' +
+      '<h1>المتصفح لا يدعم التفعيل</h1>' +
+      '<p class="big">افتح التطبيق من الرابط الآمن (https) وبمتصفح حديث مثل Chrome أو Safari.</p></div>';
   },
 
   waLink(reason, req){
@@ -199,29 +194,29 @@ const License = {
     const req = this.getRequesterInfo();
     const startTxt = this.info && this.info.from ? new Date(this.info.from).toLocaleDateString('ar-EG') : '';
     const titles = {
-      off: '⛔ تم تعطيل الاشتراك من الإدارة',
-      early: '⏳ الاشتراك لم يبدأ بعد' + (startTxt ? ' — يبدأ يوم ' + startTxt : ''),
-      exp: '⏰ انتهت مدة الاشتراك',
-      none: '🔒 التطبيق غير مفعّل على هذا الجهاز',
-      invalid: '⚠️ كود التفعيل غير صالح أو لا يخص هذا الجهاز'
+      off: 'تم تعطيل الاشتراك من الإدارة',
+      early: 'الاشتراك لم يبدأ بعد' + (startTxt ? ' — يبدأ يوم ' + startTxt : ''),
+      exp: 'انتهت مدة الاشتراك',
+      none: 'التطبيق غير مفعّل على هذا الجهاز',
+      invalid: 'كود التفعيل غير صالح أو لا يخص هذا الجهاز'
     };
-    document.getElementById('app').innerHTML = `<div class="box">
-      <h1>${titles[reason] || titles.none}</h1>
-      <p class="big">رقم جهازك (أرسله للإدارة):</p>
-      <div class="codebox">${id}</div>
-      <label>النشاط (إلزامي)</label>
-      <input class="inp" id="reqAct" value="${DB.esc(req.activity || '')}" placeholder="اكتب اسم النشاط">
-      <label>المسئول (إلزامي)</label>
-      <input class="inp" id="reqMgr" value="${DB.esc(req.manager || '')}" placeholder="اكتب اسم المسئول">
-      <label>رقم التواصل (إلزامي)</label>
-      <input class="inp" id="reqPhn" type="tel" value="${DB.esc(req.phone || '')}" placeholder="اكتب رقم الهاتف أو الواتساب">
-      <button type="button" class="btn ok" id="waReqBtn">📱 إرسال طلب التفعيل / التجديد عبر واتساب</button>
-      <hr style="margin:16px 0;border:0;border-top:2px dashed var(--line)">
-      <label>🔓 عندي كود تفعيل / تجديد من الإدارة</label>
-      <textarea class="inp" id="lic" rows="3" dir="ltr"></textarea>
-      <button class="btn" id="act">تفعيل الكود</button>
-      <p class="hint" style="margin-top:10px">لو الكود مش شغال، تأكد إن الإدارة بعتته لنفس رقم الجهاز الظاهر فوق.</p>
-    </div>`;
+    document.getElementById('app').innerHTML = '<div class="box">' +
+      '<h1>' + (titles[reason] || titles.none) + '</h1>' +
+      '<p class="big">رقم جهازك (أرسله للإدارة):</p>' +
+      '<div class="codebox">' + id + '</div>' +
+      '<label>النشاط (إلزامي)</label>' +
+      '<input class="inp" id="reqAct" value="' + DB.esc(req.activity || '') + '" placeholder="اكتب اسم النشاط">' +
+      '<label>المسئول (إلزامي)</label>' +
+      '<input class="inp" id="reqMgr" value="' + DB.esc(req.manager || '') + '" placeholder="اكتب اسم المسئول">' +
+      '<label>رقم التواصل (إلزامي)</label>' +
+      '<input class="inp" id="reqPhn" type="tel" value="' + DB.esc(req.phone || '') + '" placeholder="اكتب رقم الهاتف أو الواتساب">' +
+      '<button type="button" class="btn ok" id="waReqBtn">إرسال طلب التفعيل / التجديد عبر واتساب</button>' +
+      '<hr style="margin:16px 0;border:0;border-top:2px dashed var(--line)">' +
+      '<label>عندي كود تفعيل / تجديد من الإدارة</label>' +
+      '<textarea class="inp" id="lic" rows="3" dir="ltr"></textarea>' +
+      '<button class="btn" id="act">تفعيل الكود</button>' +
+      '<p class="hint" style="margin-top:10px">لو الكود مش شغال، تأكد إن الإدارة بعتته لنفس رقم الجهاز الظاهر فوق.</p>' +
+    '</div>';
 
     document.getElementById('waReqBtn').onclick = () => {
       const valid = this.validateRequester(
@@ -255,19 +250,19 @@ const License = {
     const req = this.getRequesterInfo();
     const dl = this.daysLeft();
     const left = dl === null ? '<br>المدة: مفتوحة' : '<br>المتبقي: ' + (dl >= 0 ? dl + ' يوم' : 'منتهٍ');
-    const m = UI.modal(`<h2>🔑 بيانات التفعيل</h2>
-      <p class="big">رقم الجهاز</p><div class="codebox">${this.deviceId()}</div>
-      <p>المحل: ${DB.esc(cur.s || '—')}<br>النشاط: ${DB.esc(cur.b || req.activity || '—')}<br>المستخدم: ${DB.esc(cur.u || req.manager || '—')}${left}</p>
-      <label>النشاط (إلزامي)</label>
-      <input class="inp" id="mAct" value="${DB.esc(req.activity || cur.b || '')}" placeholder="اكتب اسم النشاط">
-      <label>المسئول (إلزامي)</label>
-      <input class="inp" id="mMgr" value="${DB.esc(req.manager || cur.u || '')}" placeholder="اكتب اسم المسئول">
-      <label>رقم التواصل (إلزامي)</label>
-      <input class="inp" id="mPhn" type="tel" value="${DB.esc(req.phone || '')}" placeholder="اكتب رقم التواصل">
-      <button type="button" class="btn ok" id="mWa">📱 إرسال طلب التجديد عبر واتساب</button>
-      <label>كود تجديد من الإدارة</label>
-      <textarea class="inp" id="nl" rows="3" dir="ltr"></textarea>
-      <button class="btn ok" id="go">تحديث</button><button class="btn gray" id="x">رجوع</button>`);
+    const m = UI.modal('<h2>بيانات التفعيل</h2>' +
+      '<p class="big">رقم الجهاز</p><div class="codebox">' + this.deviceId() + '</div>' +
+      '<p>المحل: ' + DB.esc(cur.s || '—') + '<br>النشاط: ' + DB.esc(cur.b || req.activity || '—') + '<br>المستخدم: ' + DB.esc(cur.u || req.manager || '—') + left + '</p>' +
+      '<label>النشاط (إلزامي)</label>' +
+      '<input class="inp" id="mAct" value="' + DB.esc(req.activity || cur.b || '') + '" placeholder="اكتب اسم النشاط">' +
+      '<label>المسئول (إلزامي)</label>' +
+      '<input class="inp" id="mMgr" value="' + DB.esc(req.manager || cur.u || '') + '" placeholder="اكتب اسم المسئول">' +
+      '<label>رقم التواصل (إلزامي)</label>' +
+      '<input class="inp" id="mPhn" type="tel" value="' + DB.esc(req.phone || '') + '" placeholder="اكتب رقم التواصل">' +
+      '<button type="button" class="btn ok" id="mWa">إرسال طلب التجديد عبر واتساب</button>' +
+      '<label>كود تجديد من الإدارة</label>' +
+      '<textarea class="inp" id="nl" rows="3" dir="ltr"></textarea>' +
+      '<button class="btn ok" id="go">تحديث</button><button class="btn gray" id="x">رجوع</button>');
     m.querySelector('#x').onclick = () => m.close();
     m.querySelector('#mWa').onclick = () => {
       const valid = this.validateRequester(
@@ -287,7 +282,7 @@ const License = {
       if (!valid) return;
       const r = await this.activate(m.querySelector('#nl').value);
       if (r === true){
-        m.close(); UI.toast('تم التجديد ✔');
+        m.close(); UI.toast('تم التجديد');
         if (window.afterLicense) window.afterLicense();
       } else if (r){
         m.close();
