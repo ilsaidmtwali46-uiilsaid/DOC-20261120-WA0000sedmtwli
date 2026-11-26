@@ -59,10 +59,32 @@ const DB = {
   },
   round(n){ return Math.round((Number(n)||0)*100)/100; },
 
-  /* FIX-09: حذف الأصفار الزائدة بشكل صحيح */
   money(n){
     const v = this.round(n);
     return (Number.isInteger(v) ? v : v.toFixed(2).replace(/\.?0+$/,'')) + ' جنيه';
+  },
+
+  normName(s){
+    return String(s == null ? '' : s)
+      .trim()
+      .toLowerCase()
+      .replace(/[\u064B-\u065F\u0670]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي')
+      .replace(/\s+/g, ' ');
+  },
+
+  findDuplicateProduct(name, code, ignoreId, customList){
+    const list = customList || this.list('products');
+    const nn = this.normName(name);
+    const nc = String(code || '').trim().toLowerCase();
+    return list.find(p => {
+      if (ignoreId && p.id === ignoreId) return false;
+      if (nn && this.normName(p.name) === nn) return true;
+      if (nc && String(p.code || '').trim().toLowerCase() === nc) return true;
+      return false;
+    }) || null;
   },
 
   partyName(key, id, fallback){
@@ -171,17 +193,29 @@ const DB = {
     return 'PRD-' + (max + 1);
   },
   getProduct(id){ return this.list('products').find(p => p.id === id); },
+
   addProduct(p){
     const all = this.list('products');
+    p.name = String(p.name || '').trim();
+    p.code = String(p.code || '').trim() || this.generateProductCode(all);
+    const dup = this.findDuplicateProduct(p.name, p.code, null, all);
+    if (dup) return { error: 'هذا الصنف مسجل بالفعل: ' + dup.name + ' (' + dup.code + ')', duplicate: dup };
     p.id = p.id || this.newId('p');
-    p.code = p.code || this.generateProductCode(all);
-    all.push(p); this.save('products', all); return p;
+    all.push(p);
+    this.save('products', all);
+    return p;
   },
+
   updateProduct(id, changes){
     const all = this.list('products'), i = all.findIndex(p => p.id === id);
-    if (i < 0) return null;
-    Object.assign(all[i], changes);
-    this.save('products', all); return all[i];
+    if (i < 0) return { error: 'الصنف غير موجود' };
+    const nextName = changes.name !== undefined ? String(changes.name).trim() : all[i].name;
+    const nextCode = changes.code !== undefined ? String(changes.code).trim() : all[i].code;
+    const dup = this.findDuplicateProduct(nextName, nextCode, id, all);
+    if (dup) return { error: 'يوجد صنف آخر بنفس الاسم أو الكود: ' + dup.name + ' (' + dup.code + ')', duplicate: dup };
+    Object.assign(all[i], changes, { name: nextName, code: nextCode });
+    this.save('products', all);
+    return all[i];
   },
 
   addSupplier(s){
@@ -226,7 +260,6 @@ const DB = {
     return this.round(n);
   },
 
-  /* دعم الدفعة المقدمة في البيع الآجل */
   completeSale(items, type, customerId, meta){
     return this.atomic(() => {
       if (!items || !items.length) return { error: 'الفاتورة فارغة' };
