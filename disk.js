@@ -1,228 +1,466 @@
 const Disk = {
-  _db: null, _h: null, _dir: null, _timer: null, _started: false,
-  _auto: false, _err: '', _lastSave: null, _hasData: false,
-  ok(){ return typeof window.showDirectoryPicker === 'function' && window.isSecureContext; },
-  open(){
-    if (this._db) return Promise.resolve(this._db);
+  ROOT_NAME: 'محاسبة-المحل',
+  KEEP_DAILY: 14,
+  state: 'new',
+  err: '',
+  dir: null,
+  root: null,
+  pending: 0,
+  busy: false,
+  busySnap: false,
+  _t1: null, _t2: null, _started: false, _hooked: false,
+
+  supported(){ return typeof window.showDirectoryPicker === 'function'; },
+  mode(){ return localStorage.getItem('gs_fs_mode') || ''; },
+  setMode(m){ localStorage.setItem('gs_fs_mode', m); },
+  pad(n){ return String(n).padStart(2, '0'); },
+  ymd(d){ return d.getFullYear() + '-' + this.pad(d.getMonth() + 1) + '-' + this.pad(d.getDate()); },
+  hms(d){ return this.pad(d.getHours()) + this.pad(d.getMinutes()) + this.pad(d.getSeconds()); },
+  safe(s){ return String(s).replace(/[\\/:*?"<>|\s]+/g, '-').replace(/-+/g, '-'); },
+  shop(){
+    const i = (typeof License !== 'undefined') ? License.info : null;
+    return (i && (i.b || i.s)) || 'المحل';
+  },
+  ver(){ return window.APP_VERSION || ''; },
+
+  idb(){
     return new Promise((res, rej) => {
-      const r = indexedDB.open('gs_disk_v1', 1);
+      const r = indexedDB.open('gs_disk', 1);
       r.onupgradeneeded = () => r.result.createObjectStore('kv');
-      r.onsuccess = () => { this._db = r.result; res(this._db); };
+      r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });
   },
-  async get(k){
-    const db = await this.open();
-    return new Promise(res => {
-      const r = db.transaction('kv').objectStore('kv').get(k);
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => res(null);
-    });
+  async kvGet(k){
+    const db = await this.idb();
+    return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
   },
-  async put(k, v){
-    const db = await this.open();
-    return new Promise((res, rej) => {
-      const tx = db.transaction('kv', 'readwrite');
-      tx.objectStore('kv').put(v, k);
-      tx.oncomplete = () => res(true);
-      tx.onerror = () => rej(tx.error);
-    });
+  async kvSet(k, v){
+    const db = await this.idb();
+    return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
   },
-  async pick(){
-    if (!this.ok()) return false;
+  async kvDel(k){
+    const db = await this.idb();
+    return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').delete(k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+  },
+
+  async perm(h, ask){
+    if (!h) return false;
+    if (!h.queryPermission) return true;
+    const o = { mode: 'readwrite' };
+    if ((await h.queryPermission(o)) === 'granted') return true;
+    if (ask && (await h.requestPermission(o)) === 'granted') return true;
+    return false;
+  },
+  async openRoot(){
+    this.root = await this.dir.getDirectoryHandle(this.ROOT_NAME, { create: true });
+  },
+
+  async sub(path){
+    let h = this.root;
+    for (const p of path) h = await h.getDirectoryHandle(p, { create: true });
+    return h;
+  },
+  async write(dirH, name, data){
+    const fh = await dirH.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(data);
+    await w.close();
+  },
+  async readText(name){
     try {
-      const dir = await window.showDirectoryPicker({ mode:'readwrite', startIn:'documents' });
-      const file = await dir.getFileHandle('بيانات-المحل.json', { create:true });
-      await this.put('dir', dir);
-      await this.put('file', file);
-      this._dir = dir; this._h = file; this._err = '';
-      this._hasData = await this.fileHasData();
-      return true;
-    } catch(e){
-      if (e && e.name !== 'AbortError') UI.toast('تعذر اختيار المجلد: ' + e.message, true);
-      return false;
-    }
+      const fh = await this.root.getFileHandle(name);
+      return await (await fh.getFile()).text();
+    } catch(e){ return null; }
   },
-  async fileHasData(){
-    if (!this._h) return false;
-    try {
-      const f = await this._h.getFile();
-      if (!f || f.size < 10) return false;
-      const obj = JSON.parse(await f.text());
-      return !!(obj && obj.v === 1 && obj.data && Object.keys(obj.data).length);
-    } catch(e){ return false; }
+  async readJson(name){
+    const t = await this.readText(name);
+    if (!t) return null;
+    try { return JSON.parse(t); } catch(e){ return null; }
   },
-  async restore(){
-    if (!this._h) return false;
+
+  async init(){
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch(e){}
+    const m = this.mode();
+    this.state = m === 'folder' ? 'needs' : (m || 'new');
+    if (m !== 'folder') return;
     try {
-      const f = await this._h.getFile();
-      const txt = await f.text();
-      if (!txt.trim()) return false;
-      const obj = JSON.parse(txt);
-      if (!obj || obj.v !== 1 || !obj.data) return false;
-      DB.restoreObject(obj);
-      return true;
-    } catch(e){
-      if (e && e.message === 'full') UI.toast('مساحة المتصفح ممتلئة — تعذرت الاستعادة', true);
-      return false;
-    }
-  },
-  async saveNow(force){
-    if (!this._h) return false;
-    if (!force && !this._auto) return false;
-    try {
-      if (!force && this._hasData){
-        const cur = DB.snapshot();
-        if (!cur.data[DB.K.setup] && !(cur.data[DB.K.products] || []).length){
-          this._err = 'توقّف الحفظ لحماية بيانات المجلد'; this.chip(); return false;
-        }
+      const h = await this.kvGet('dir');
+      if (!h) return;
+      this.dir = h;
+      if (await this.perm(h, false)){
+        await this.openRoot();
+        this.state = 'ok';
       }
-      const w = await this._h.createWritable();
-      await w.write(JSON.stringify(DB.snapshot(), null, 2));
-      await w.close();
-      this._err = ''; this._lastSave = new Date(); this._hasData = true;
-      DB.set(DB.K.lastBackup, this._lastSave.toISOString());
-      this.chip();
-      return true;
-    } catch(e){
-      this._err = e && e.name === 'NotAllowedError' ? 'اضغط لإعادة الإذن' : 'فشل الحفظ';
-      this.chip();
-      return false;
-    }
+    } catch(e){ this.state = 'error'; this.err = e.message || String(e); }
   },
-  touch(){
-    if (!this._h || !this._auto) return;
-    clearTimeout(this._timer);
-    this._timer = setTimeout(() => this.saveNow(), 900);
-  },
-  async start(onReady){
+
+  async start(next){
     this._started = true;
-    if (!this.ok()){ this._auto = true; return onReady(); }
+    this.hook();
+    try { await this.init(); } catch(e){ this.state = 'error'; this.err = e.message || String(e); }
+    if (this.state === 'new') return this.firstRun(next);
+    if (this.state === 'ok') this.touch(true);
+    next();
+  },
+
+  hook(){
+    if (this._hooked) return;
+    this._hooked = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && this.state === 'ok'){ this.flushDocs(); this.flushSnap(); }
+    });
+  },
+
+  firstRun(next){
+    const sup = this.supported();
+    document.getElementById('app').innerHTML = '<div class="box">' +
+      '<h1>مكان حفظ بيانات المحل</h1>' +
+      '<p class="big">كل فاتورة ومعاملة تُحفظ تلقائياً كملف على ذاكرة جهازك فقط (بدون إنترنت أو سيرفر).</p>' +
+      '<p class="hint">ستجد داخل المجلد: الفواتير بصيغة HTML للطباعة، وسجل المعاملات والمخزون والعملاء والموردين بصيغة Excel، ونسخة كاملة للاستعادة.</p>' +
+      (sup
+        ? '<p class="hint">الأفضل إنشاء مجلد جديد باسم مثل «محاسبة» واختياره.</p><button class="btn ok" id="dpick">اختيار مجلد الحفظ</button>'
+        : '<p class="hint" style="color:var(--bad)">متصفحك لا يدعم اختيار مجلد للحفظ التلقائي.</p>') +
+      '<button class="btn gray" id="ddl">نسخ يدوية في التنزيلات</button>' +
+      '<button class="btn gray" id="dskip">تخطي الآن</button>' +
+    '</div>';
+    const go = () => next();
+    const pick = document.getElementById('dpick');
+    if (pick) pick.onclick = async () => {
+      pick.disabled = true;
+      try { if (await this.choose()) return go(); }
+      catch(e){ UI.toast('تعذر استخدام هذا المجلد', true); }
+      pick.disabled = false;
+    };
+    document.getElementById('ddl').onclick = () => { this.setMode('downloads'); this.state = 'downloads'; go(); };
+    document.getElementById('dskip').onclick = () => { this.setMode('none'); this.state = 'none'; go(); };
+  },
+
+  async choose(){
+    let dir;
+    try { dir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'gs-accounting' }); }
+    catch(e){ if (e && e.name === 'AbortError') return false; throw e; }
+    this.dir = dir;
+    await this.openRoot();
+    await this.write(this.root, 'اقرأني.txt', 'هذا المجلد يخص برنامج محاسبة المحل (' + this.shop() + ').');
+    await this.kvSet('dir', dir);
+    this.setMode('folder');
+    localStorage.setItem('gs_fs_name', dir.name || 'المجلد المحدد');
+    this.state = 'ok';
+    this.err = '';
+    const restored = await this.offerRestore();
+    if (restored) return true;
+    localStorage.removeItem('gs_fs_done');
+    this.touch(true);
+    return true;
+  },
+
+  async offerRestore(){
+    const snap = await this.readJson('بيانات-المحل.json');
+    if (!snap || !snap.data) return false;
+    const when = snap.at ? new Date(snap.at).toLocaleString('ar-EG') : '';
+    const yes = await UI.confirm('تم العثور على بيانات محفوظة سابقاً في هذا المجلد' + (when ? ' (' + when + ')' : '') + '. هل تريد استعادتها؟', 'استعادة', 'لا، متابعة');
+    if (yes){
+      try {
+        DB.restoreObject(snap);
+        this.markAllDone();
+        UI.toast('تمت الاستعادة');
+        setTimeout(() => location.reload(), 600);
+        return true;
+      } catch(e){ UI.toast('تعذرت الاستعادة', true); return false; }
+    }
     try {
-      this._h = await this.get('file');
-      this._dir = await this.get('dir');
-    } catch(e){}
-    if (this._h){
-      const q = await this._h.queryPermission({ mode:'readwrite' });
-      if (q === 'granted'){
-        if (!DB.isSetupDone()) await this.restore();
-        this._hasData = await this.fileHasData();
-        this._auto = true;
-        if (DB.isSetupDone() && !this._hasData) this.saveNow();
-        return onReady();
+      const old = await this.readText('بيانات-المحل.json');
+      if (old){
+        const d = await this.sub(['نسخ-يومية']);
+        const n = new Date();
+        await this.write(d, 'سابق-' + this.ymd(n) + '-' + this.hms(n) + '.json', old);
       }
-      const app = document.getElementById('app');
-      app.innerHTML = '<div class="box" style="margin-top:20px">' +
-        '<h1>إعادة ربط مجلد الحفظ</h1>' +
-        '<p class="big">اضغط للسماح للتطبيق بالقراءة والحفظ في مجلدك المختار.</p>' +
-        '<button class="btn ok" id="grant">السماح والفتح</button>' +
-        '<button class="btn gray" id="skip">المتابعة بدون ربط الآن</button></div>';
-      app.querySelector('#grant').onclick = async () => {
-        try {
-          if ((await this._h.requestPermission({ mode:'readwrite' })) === 'granted'){
-            if (!DB.isSetupDone()) await this.restore();
-            this._hasData = await this.fileHasData();
-            this._auto = true;
-            if (DB.isSetupDone() && !this._hasData) await this.saveNow();
-            return onReady();
-          }
-        } catch(e){}
-        UI.toast('لم يُمنح الإذن', true);
-      };
-      app.querySelector('#skip').onclick = () => { this._err = 'غير مربوط'; onReady(); };
+    } catch(e){}
+    return false;
+  },
+
+  markAllDone(){
+    localStorage.setItem('gs_fs_done', JSON.stringify(this.docs().map(x => x.k)));
+  },
+
+  touch(now){
+    if (this.state !== 'ok'){ this.chip(); return; }
+    clearTimeout(this._t1);
+    this._t1 = setTimeout(() => this.flushDocs(), now ? 200 : 1500);
+    clearTimeout(this._t2);
+    this._t2 = setTimeout(() => this.flushSnap(), now ? 1500 : 6000);
+    this.chip();
+  },
+
+  docs(){
+    const out = [];
+    DB.list('sales').forEach(d => out.push({ k:'s:' + d.id, kind:'sale', d }));
+    DB.list('purchases').forEach(d => out.push({ k:'p:' + d.id, kind:'purchase', d }));
+    (DB.get(DB.K.payments, []) || []).forEach(d => out.push({ k:'y:' + d.id, kind:'payment', d }));
+    (DB.get(DB.K.stocktakes, []) || []).forEach(d => out.push({ k:'t:' + d.id, kind:'stocktake', d }));
+    return out.sort((a, b) => String(a.d.date).localeCompare(String(b.d.date)));
+  },
+  label(x){
+    const d = x.d;
+    if (x.kind === 'sale') return (d.isReturn ? 'مرتجع بيع ' : 'بيع ') + (d.type === 'cash' ? 'نقدي' : 'آجل');
+    if (x.kind === 'purchase') return d.isReturn ? 'مرتجع شراء' : 'فاتورة شراء';
+    if (x.kind === 'payment') return d.kind === 'customers' ? 'استلام من عميل' : 'سداد لمورد';
+    return 'جرد';
+  },
+  info(x){
+    const d = x.d, dt = new Date(d.date);
+    let party = '', total = 0, paid = 0, count = (d.items || []).length;
+    if (x.kind === 'sale'){
+      party = d.customerId ? DB.partyName('customers', d.customerId) : '';
+      total = d.total || 0;
+      paid = d.type === 'cash' ? total : (Number(d.paid) || 0);
+    } else if (x.kind === 'purchase'){
+      party = d.supplierId ? DB.partyName('suppliers', d.supplierId, d.supplierName) : (d.supplierName || '');
+      total = d.total || 0; paid = d.isReturn ? (d.received || 0) : (d.paid || 0);
+    } else if (x.kind === 'payment'){
+      party = DB.partyName(d.kind, d.party);
+      total = d.amount || 0; paid = total; count = 0;
+    } else {
+      total = d.totalDiffValue || 0;
+    }
+    const label = this.label(x);
+    const day = this.ymd(dt);
+    const file = 'الفواتير/' + day + '/' + this.hms(dt) + '-' + this.safe(label) + '-' + String(d.id).slice(-4) + '.html';
+    return { dt, day, time: this.pad(dt.getHours()) + ':' + this.pad(dt.getMinutes()), label, party, count,
+      total: DB.round(total), paid: DB.round(paid), rem: DB.round(total - paid), file };
+  },
+
+  csvCell(v){ return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; },
+  csvRow(a){ return a.map(v => this.csvCell(v)).join(',') + '\r\n'; },
+  CSV_HEAD: ['التاريخ','الوقت','النوع','الطرف','عدد الأصناف','الإجمالي','المدفوع/المستلم','الباقي','ملف الفاتورة'],
+  docRow(i){ return this.csvRow([this.ymd(i.dt), i.time, i.label, i.party, i.count, i.total, i.paid, i.rem, i.file]); },
+  listCsv(name){
+    if (name === 'products') return '\ufeff' + this.csvRow(['الكود','الصنف','سعر الشراء','سعر البيع','الكمية','الحد الأدنى','قيمة المخزون']) +
+      DB.list('products').map(p => this.csvRow([p.code, p.name, p.buy || 0, p.price || 0, p.qty || 0, p.min || 0, DB.round((p.qty || 0) * (p.buy || 0))])).join('');
+    if (name === 'customers') return '\ufeff' + this.csvRow(['العميل','الهاتف','العنوان','الرصيد']) +
+      DB.list('customers').map(c => this.csvRow([c.name, c.phone || '', c.address || '', c.balance || 0])).join('');
+    return '\ufeff' + this.csvRow(['المورد','الهاتف','العنوان','الرصيد']) +
+      DB.list('suppliers').map(c => this.csvRow([c.name, c.phone || '', c.address || '', c.balance || 0])).join('');
+  },
+  async appendCsv(text, fresh){
+    const fh = await this.root.getFileHandle('سجل-المعاملات.csv', { create: true });
+    const size = (await fh.getFile()).size;
+    if (fresh || size === 0){
+      const w = await fh.createWritable();
+      await w.write('\ufeff' + this.csvRow(this.CSV_HEAD) + text);
+      await w.close();
       return;
     }
-    if (DB.isSetupDone() || DB.get('gs_fs_skip', false)) return onReady();
-    const app = document.getElementById('app');
-    app.innerHTML = '<div class="box" style="margin-top:20px">' +
-      '<h1>اختر مكان حفظ بياناتك</h1>' +
-      '<p class="big">سيحفظ التطبيق نسخة تلقائية في هذا المجلد مع كل عملية، حتى لا تضيع بياناتك أبداً.</p>' +
-      '<button class="btn ok" id="pick">اختيار المجلد</button>' +
-      '<button class="btn gray" id="later">لاحقاً</button></div>';
-    app.querySelector('#pick').onclick = async () => {
-      if (!await this.pick()) return;
-      if (this._hasData){
-        const ok = await UI.confirm('يوجد ملف بيانات سابق في هذا المجلد. استعادته؟', 'نعم، استعد', 'بدء جديد');
-        if (ok) await this.restore();
+    const w = await fh.createWritable({ keepExistingData: true });
+    await w.seek(size);
+    await w.write(text);
+    await w.close();
+  },
+
+  html(x, i){
+    const e = s => DB.esc(s), d = x.d, M = v => DB.money(v);
+    let table = '', rows = [];
+    if (x.kind === 'sale' || x.kind === 'purchase'){
+      const price = it => x.kind === 'sale' ? it.price : it.cost;
+      table = '<table><tr><th>الصنف</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr>' +
+        (d.items || []).map(it => '<tr><td>' + e(it.name) + '</td><td>' + DB.round(it.qty) + '</td><td>' + M(price(it)) + '</td><td>' + M(it.qty * price(it)) + '</td></tr>').join('') + '</table>';
+    } else if (x.kind === 'stocktake'){
+      table = '<table><tr><th>الصنف</th><th>قبل الجرد</th><th>بعد الجرد</th><th>فرق القيمة</th></tr>' +
+        (d.items || []).map(it => '<tr><td>' + e(it.name) + '</td><td>' + DB.round(it.before) + '</td><td>' + DB.round(it.after) + '</td><td>' + M(it.diffValue || 0) + '</td></tr>').join('') + '</table>';
+    }
+    if (i.party) rows.push([x.kind === 'sale' ? 'العميل' : (x.kind === 'purchase' ? 'المورد' : 'الطرف'), i.party]);
+    rows.push(['الإجمالي', M(i.total)]);
+    if (x.kind === 'purchase'){
+      rows.push([d.isReturn ? 'المستلم من المورد' : 'المدفوع', M(i.paid)]);
+      if (i.rem > 0) rows.push([d.isReturn ? 'خُصم من حساب المورد' : 'الباقي للمورد', M(i.rem)]);
+    } else if (x.kind === 'sale'){
+      if (i.paid > 0) rows.push([d.isReturn ? 'رد نقدي' : 'المدفوع نقداً', M(i.paid)]);
+      if (i.rem > 0) rows.push(['الباقي على حساب العميل', M(i.rem)]);
+    }
+    const img = x.kind === 'purchase' && d.invoiceImg ? '<h3>صورة الفاتورة</h3><img class="inv" src="' + d.invoiceImg + '" alt="">' : '';
+    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+'<meta name="viewport" content="width=device-width, initial-scale=1">' +
+'<title>' + e(i.label) + ' - ' + e(this.shop()) + '</title>' +
+'<style>body{font-family:Tahoma,Arial,sans-serif;margin:0;padding:16px;color:#222;max-width:720px;margin-inline:auto}' +
+'h1{margin:0 0 2px;font-size:1.3rem}.sub{color:#555;margin-bottom:12px}' +
+'table{width:100%;border-collapse:collapse;margin:10px 0}th,td{border:1px solid #bbb;padding:7px 8px;text-align:right}th{background:#eee}' +
+'.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #ccc;font-weight:700}' +
+'.inv{max-width:100%;border:1px solid #ccc}.np{display:block;margin:16px 0;padding:12px;width:100%;font:inherit;font-weight:700;cursor:pointer}' +
+'.ft{margin-top:18px;font-size:.8rem;color:#777;text-align:center}' +
+'@page{size:A5;margin:10mm}@media print{.np{display:none}}</style></head><body>' +
+'<h1>' + e(this.shop()) + '</h1>' +
+'<div class="sub">' + e(i.label) + ' — ' + e(i.dt.toLocaleString('ar-EG')) + '</div>' +
+table +
+rows.map(r => '<div class="row"><span>' + e(r[0]) + '</span><span>' + e(r[1]) + '</span></div>').join('') +
+img +
+'<button class="np" onclick="window.print()">طباعة</button>' +
+'<div class="ft">نسخة محفوظة تلقائياً من برنامج المحاسبة</div></body></html>';
+  },
+
+  async flushDocs(){
+    if (this.state !== 'ok') return;
+    if (this.busy){ this._again = true; return; }
+    this.busy = true;
+    try {
+      const done = new Set(JSON.parse(localStorage.getItem('gs_fs_done') || '[]'));
+      const all = this.docs().filter(x => !done.has(x.k));
+      this.pending = all.length;
+      if (all.length){
+        const fresh = done.size === 0;
+        const batch = all.slice(0, 40);
+        let rows = '';
+        for (const x of batch){
+          const i = this.info(x);
+          const parts = i.file.split('/');
+          const dir = await this.sub(parts.slice(0, -1));
+          await this.write(dir, parts[parts.length - 1], this.html(x, i));
+          rows += this.docRow(i);
+          done.add(x.k);
+        }
+        await this.appendCsv(rows, fresh);
+        localStorage.setItem('gs_fs_done', JSON.stringify([...done]));
+        this.pending = all.length - batch.length;
       }
-      this._auto = true;
-      if (DB.isSetupDone()) await this.saveNow();
-      onReady();
-    };
-    app.querySelector('#later').onclick = () => { DB.set('gs_fs_skip', true); onReady(); };
+      localStorage.setItem('gs_fs_last', new Date().toISOString());
+      this.err = '';
+    } catch(e){ this.fail(e); }
+    finally {
+      this.busy = false;
+      this.chip();
+      if (this.state === 'ok' && (this._again || this.pending > 0)){ this._again = false; setTimeout(() => this.flushDocs(), 60); }
+    }
+  },
+
+  async flushSnap(){
+    if (this.state !== 'ok' || this.busySnap) return;
+    this.busySnap = true;
+    try {
+      const text = JSON.stringify(DB.snapshot());
+      await this.write(this.root, 'بيانات-المحل.json', text);
+      const daily = await this.sub(['نسخ-يومية']);
+      await this.write(daily, 'نسخة-' + this.ymd(new Date()) + '.json', text);
+      await this.write(this.root, 'المخزون.csv', this.listCsv('products'));
+      await this.write(this.root, 'العملاء.csv', this.listCsv('customers'));
+      await this.write(this.root, 'الموردين.csv', this.listCsv('suppliers'));
+      await this.prune(daily);
+      localStorage.setItem('gs_fs_snap', new Date().toISOString());
+      localStorage.setItem('gs_fs_last', new Date().toISOString());
+      this.err = '';
+    } catch(e){ this.fail(e); }
+    finally { this.busySnap = false; this.chip(); }
+  },
+  async prune(dirH){
+    const names = [];
+    for await (const [name] of dirH.entries()){ if (/^نسخة-\d{4}-\d{2}-\d{2}\.json$/.test(name)) names.push(name); }
+    names.sort();
+    while (names.length > this.KEEP_DAILY){ try { await dirH.removeEntry(names.shift()); } catch(e){ break; } }
+  },
+
+  fail(e){
+    const n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'SecurityError') this.state = 'needs';
+    else { this.state = 'error'; this.err = n === 'NotFoundError' ? 'المجلد غير موجود أو تم حذفه' : ((e && e.message) || 'خطأ غير معروف'); }
+  },
+
+  lastTxt(key){
+    const v = localStorage.getItem(key);
+    return v ? new Date(v).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—';
+  },
+  chipInfo(){
+    const name = localStorage.getItem('gs_fs_name') || '';
+    switch (this.state){
+      case 'ok': return { t: 'محفوظ على الجهاز' + (name ? ' (' + name + ')' : '') + ' — آخر حفظ ' + this.lastTxt('gs_fs_last') + (this.pending ? ' — باقي ' + this.pending : ''), c: '' };
+      case 'needs': return { t: 'اضغط هنا لتأكيد إذن الحفظ في المجلد' + (name ? ' (' + name + ')' : ''), c: 'warn' };
+      case 'error': return { t: 'تعذر الحفظ في المجلد — اضغط للتفاصيل', c: 'bad' };
+      case 'downloads': {
+        const lb = localStorage.getItem(DB.K.lastBackup);
+        const today = lb && new Date(lb).toDateString() === new Date().toDateString();
+        return { t: today ? 'نسخ يدوية — تم حفظ نسخة اليوم' : 'لم تحفظ نسخة اليوم — اضغط', c: today ? '' : 'warn' };
+      }
+      default: return { t: 'الحفظ على الجهاز غير مفعّل — اضغط للتفعيل', c: 'warn' };
+    }
   },
   chip(){
-    const el = document.getElementById('fsChip'); if (!el) return;
-    if (!this.ok()){
-      const last = DB.get(DB.K.lastBackup, null);
-      const days = last ? Math.floor((Date.now() - new Date(last)) / 86400000) : 999;
-      el.className = 'fs-chip' + (days >= 7 ? ' warn' : '');
-      el.textContent = days >= 7
-        ? '⚠ لم تأخذ نسخة احتياطية منذ فترة — اضغط للحفظ'
-        : 'آخر نسخة احتياطية: ' + new Date(last).toLocaleDateString('ar-EG');
-      el.onclick = () => this.panel();
-      return;
-    }
-    if (!this._h){
-      el.className = 'fs-chip warn';
-      el.textContent = '⚠ البيانات غير مربوطة بمجلد — اضغط لاختيار مجلد الحفظ';
-    } else if (this._err){
-      el.className = 'fs-chip bad';
-      el.textContent = '⚠ ' + this._err + ' — اضغط للإصلاح';
-    } else {
-      el.className = 'fs-chip';
-      const t = this._lastSave ? ' • ' + this._lastSave.toLocaleTimeString('ar-EG', {hour:'2-digit',minute:'2-digit'}) : '';
-      el.textContent = '✓ محفوظ تلقائياً في المجلد: ' + (this._dir ? this._dir.name : '') + t;
-    }
-    el.onclick = () => this.panel();
+    const el = document.getElementById('fsChip');
+    if (!el) return;
+    const c = this.chipInfo();
+    el.textContent = c.t;
+    el.className = 'fs-chip ' + c.c;
+    el.onclick = () => this.onChip();
   },
-  panel(){
-    const last = DB.get(DB.K.lastBackup, null);
-    let body = '<h2>حفظ البيانات والنسخ الاحتياطي</h2>';
-    if (this.ok()){
-      body += '<div class="box big">' + (this._h
-        ? 'المجلد المربوط: ' + DB.esc(this._dir ? this._dir.name : 'مربوط') +
-          (this._err ? '<br><span style="color:var(--bad)">الحالة: ' + DB.esc(this._err) + '</span>' : '<br><span style="color:var(--ok)">الحفظ التلقائي يعمل</span>')
-        : 'لم يُربط مجلد بعد') + '</div>';
-      if (this._h && this._err) body += '<button class="btn ok" id="regrant">إعادة السماح</button>';
-      body += '<button class="btn ok" id="ch">' + (this._h ? 'تغيير المجلد' : 'اختيار مجلد الحفظ') + '</button>';
-      if (this._h){
-        body += '<button class="btn" id="now">حفظ في المجلد الآن</button>';
-        body += '<button class="btn warn" id="fromDisk">استعادة من المجلد</button>';
-      }
-    } else {
-      body += '<p class="big">الحفظ التلقائي في مجلد متاح على Chrome و Edge للكمبيوتر والأندرويد. على هذا المتصفح استخدم زر النسخة الاحتياطية:</p>';
-    }
-    body += '<p class="hint">آخر نسخة: ' + (last ? new Date(last).toLocaleString('ar-EG') : 'لا يوجد') + '</p>';
-    body += '<button class="btn" id="dl">تنزيل ملف نسخة احتياطية</button>';
-    body += '<button class="btn gray" id="x">رجوع</button>';
-    const m = UI.modal(body);
-    const $ = id => m.querySelector('#' + id);
-    $('x').onclick = () => m.close();
-    $('dl').onclick = () => { DB.exportBackup(); this.chip(); m.close(); };
-    if ($('regrant')) $('regrant').onclick = async () => {
+  async onChip(){
+    if (this.state === 'needs' && this.dir){
       try {
-        if ((await this._h.requestPermission({ mode:'readwrite' })) === 'granted'){
-          this._err = ''; this._auto = true; await this.saveNow(true);
-          UI.toast('تم التفعيل'); m.close();
+        if (await this.perm(this.dir, true)){
+          await this.openRoot();
+          this.state = 'ok';
+          this.touch(true);
+          UI.toast('تم تفعيل الحفظ في المجلد');
+          return;
         }
-      } catch(e){ UI.toast('لم يُمنح الإذن', true); }
+      } catch(e){ this.fail(e); }
+    }
+    this.panel();
+  },
+
+  panel(){
+    const c = this.chipInfo();
+    const sup = this.supported();
+    const m = UI.modal('<h2>الحفظ في ذاكرة الجهاز</h2>' +
+      '<p class="big" style="font-size:1rem">' + DB.esc(c.t) + '</p>' +
+      (this.state === 'error' && this.err ? '<p class="hint" style="color:var(--bad)">' + DB.esc(this.err) + '</p>' : '') +
+      (this.state === 'ok' ? '<button class="btn ok" id="dnow">حفظ الآن</button>' : '') +
+      (sup ? '<button class="btn" id="dchg">' + (this.mode() === 'folder' ? 'تغيير مجلد الحفظ' : 'اختيار مجلد الحفظ') + '</button>' : '<p class="hint">اختيار المجلد غير مدعوم في هذا المتصفح.</p>') +
+      (this.dir && this.state !== 'none' ? '<button class="btn gray" id="drest">استعادة من المجلد</button>' : '') +
+      '<button class="btn gray" id="dcsv">تصدير سجل المعاملات (Excel)</button>' +
+      '<button class="btn gray" id="dbak">نسخة احتياطية (ملف)</button>' +
+      (this.mode() === 'folder' ? '<button class="btn bad" id="doff">إيقاف الحفظ في المجلد</button>' : '') +
+      '<hr style="margin:12px 0;border:0;border-top:2px dashed var(--line)">' +
+      '<p class="hint">إصدار التطبيق: <b>' + DB.esc(this.ver()) + '</b></p>' +
+      '<button class="btn gray" id="dupd">تحديث التطبيق ومسح الكاش</button>' +
+      '<button class="btn gray" id="dx">رجوع</button>');
+    const $ = id => m.querySelector('#' + id);
+    $('dx').onclick = () => m.close();
+    $('dcsv').onclick = () => this.exportCsv();
+    $('dbak').onclick = () => { DB.exportBackup(); this.chip(); };
+    $('dupd').onclick = () => { if (typeof hardRefresh === 'function') hardRefresh(); else location.reload(); };
+    if ($('dnow')) $('dnow').onclick = async () => { await this.flushDocs(); await this.flushSnap(); UI.toast(this.state === 'ok' ? 'تم الحفظ' : 'تعذر الحفظ', this.state !== 'ok'); m.close(); };
+    if ($('dchg')) $('dchg').onclick = async () => {
+      try { if (await this.choose()){ m.close(); UI.toast('تم اختيار المجلد'); } }
+      catch(e){ UI.toast('تعذر استخدام هذا المجلد', true); }
     };
-    if ($('ch')) $('ch').onclick = async () => {
-      if (await this.pick()){
-        this._auto = true;
-        await this.saveNow(true);
-        UI.toast('تم ربط المجلد وحفظ البيانات'); m.close();
-      }
+    if ($('drest')) $('drest').onclick = async () => {
+      try {
+        if (this.state !== 'ok'){
+          if (!(await this.perm(this.dir, true))) return UI.toast('لم يُمنح الإذن', true);
+          await this.openRoot(); this.state = 'ok';
+        }
+        const snap = await this.readJson('بيانات-المحل.json');
+        if (!snap || !snap.data) return UI.toast('لا توجد نسخة محفوظة', true);
+        const ok = await UI.confirm('سيتم استبدال بيانات الجهاز الحالية. متأكد؟', 'نعم، استعد', 'إلغاء');
+        if (!ok) return;
+        DB.restoreObject(snap); this.markAllDone();
+        UI.toast('تمت الاستعادة'); setTimeout(() => location.reload(), 600);
+      } catch(e){ UI.toast('تعذرت الاستعادة', true); }
     };
-    if ($('now')) $('now').onclick = async () => {
-      if (await this.saveNow(true)){ UI.toast('تم الحفظ في المجلد'); m.close(); }
+    if ($('doff')) $('doff').onclick = async () => {
+      if (!(await UI.confirm('إيقاف الحفظ التلقائي؟', 'نعم', 'إلغاء'))) return;
+      this.setMode('none'); this.state = 'none'; this.dir = null; this.root = null;
+      try { await this.kvDel('dir'); } catch(e){}
+      this.chip(); m.close();
     };
-    if ($('fromDisk')) $('fromDisk').onclick = async () => {
-      if (!await UI.confirm('سيتم استبدال البيانات الحالية بالمحفوظة في المجلد. متأكد؟', 'نعم', 'إلغاء')) return;
-      if (await this.restore()){ UI.toast('تمت الاستعادة'); setTimeout(() => location.reload(), 600); }
-      else UI.toast('لا توجد بيانات صالحة في المجلد', true);
-    };
+  },
+
+  exportCsv(){
+    let text = '\ufeff' + this.csvRow(this.CSV_HEAD);
+    this.docs().forEach(x => { text += this.docRow(this.info(x)); });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'سجل-المعاملات-' + this.ymd(new Date()) + '.csv';
+    a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(a.href); }, 4000);
   }
 };
 window.Disk = Disk;

@@ -1,4 +1,5 @@
-const CACHE = 'grocery-v17-20261126-a';
+/* غيّر رقم الإصدار هنا عند كل تعديل على الملفات */
+const CACHE = 'grocery-v16-20261125-a';
 const FILES = [
   './', 'index.html', 'style.css', 'manifest.json',
   'icon-192.png', 'icon-512.png',

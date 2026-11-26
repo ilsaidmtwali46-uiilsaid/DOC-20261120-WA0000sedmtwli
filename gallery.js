@@ -1,6 +1,5 @@
 Screens.gallery = {
   idx: 0,
-  q: '',
   items: [],
   fsZoom: 1,
   fsPanX: 0,
@@ -13,43 +12,33 @@ Screens.gallery = {
 
   $(id){ return document.getElementById(id); },
 
-  allProducts(){
-    return DB.list('products');
+  available(){
+    return DB.list('products').filter(p => (Number(p.qty) || 0) > 0);
   },
 
   render(el){
     document.body.style.overflow = '';
     this.resetZoom();
-    this.items = this.allProducts();
+    this.items = this.available();
     if (this.idx >= this.items.length) this.idx = Math.max(0, this.items.length - 1);
 
     if (!this.items.length){
-      el.innerHTML = UI.topBar('معرض المنتجات', '', true) +
+      el.innerHTML = UI.topBar('معرض المنتجات') +
         '<div class="box" style="text-align:center;padding:30px 16px">' +
-          '<h2>معرض صور المنتجات</h2>' +
-          '<p class="big">لا توجد منتجات مسجلة حالياً في المخزون.</p>' +
+          '<h2>معرض المنتجات المتاحة</h2>' +
+          '<p class="big">لا توجد منتجات متاحة حالياً في المخزون.</p>' +
           '<button class="btn ok" onclick="go(\'inventory\')">الذهاب للمخزون</button>' +
         '</div>';
       return;
     }
 
-    const opts = this.items.map((p, i) =>
-      '<option value="' + i + '">' + (i + 1) + '. ' + DB.esc(p.name) + ' (' + DB.esc(p.code) + ') — ' + DB.money(p.price) + '</option>'
-    ).join('');
+    const opts = this.items.map((p, i) => '<option value="' + i + '">' + (i + 1) + '. ' + DB.esc(p.name) + ' (' + DB.money(p.price) + ')</option>').join('');
 
-    el.innerHTML = UI.topBar('معرض صور المنتجات', '<button class="btn ok" id="galFullBtn">ملء الشاشة</button>', true) +
+    el.innerHTML = UI.topBar('معرض المنتجات', '<button class="btn" id="galFullBtn">ملء الشاشة</button>') +
       '<div class="gallery-wrap">' +
-        '<div class="box" style="padding:10px;margin-bottom:0">' +
-          '<label style="margin-top:0">اختر المنتج من القائمة المنسدلة</label>' +
-          '<div class="row" style="margin-bottom:8px">' +
-            '<select class="inp" id="galJump" style="margin:0">' + opts + '</select>' +
-            '<div class="gallery-counter" id="galCounter" style="flex:none"></div>' +
-          '</div>' +
-          '<label style="margin-top:0">أو اكتب اسم المنتج للتنبؤ السريع</label>' +
-          '<div class="pred-wrap">' +
-            '<input class="inp" id="galQ" autocomplete="off" placeholder="ابحث بالاسم أو الكود..." value="' + DB.esc(this.q) + '" style="margin-bottom:0">' +
-            '<div class="pred-list hide" id="galPred"></div>' +
-          '</div>' +
+        '<div class="row" style="margin-bottom:2px">' +
+          '<select class="inp" id="galJump" style="margin:0">' + opts + '</select>' +
+          '<div class="gallery-counter" id="galCounter" style="flex:none"></div>' +
         '</div>' +
         '<div class="gallery-stage" id="galStage">' +
           '<button class="gal-arrow gal-prev" id="galPrev" title="السابق">&#10095;</button>' +
@@ -153,37 +142,6 @@ Screens.gallery = {
     const $ = id => el.querySelector('#' + id);
 
     $('galJump').onchange = e => this.goTo(parseInt(e.target.value, 10) || 0);
-    $('galQ').oninput = e => {
-      this.q = e.target.value;
-      const pred = $('galPred');
-      const q = this.q.trim();
-      if (!q){
-        pred.classList.add('hide');
-        pred.innerHTML = '';
-        return;
-      }
-      const matches = UI.filterProducts(this.items, q);
-      pred.classList.remove('hide');
-      pred.innerHTML = matches.length
-        ? matches.slice(0, 12).map(p => {
-            const realIdx = this.items.findIndex(x => x.id === p.id);
-            return '<button type="button" class="pred-item" data-idx="' + realIdx + '">' +
-              '<span class="pred-name">' + DB.esc(p.name) + ' <small>(' + DB.esc(p.code) + ')</small></span>' +
-              '<span class="pred-meta">' + DB.money(p.price) + ' • متاح: ' + DB.round(p.qty) + '</span>' +
-            '</button>';
-          }).join('')
-        : '<div class="pred-empty">لا يوجد منتج مطابق</div>';
-    };
-    $('galPred').onclick = e => {
-      const b = e.target.closest('[data-idx]');
-      if (!b) return;
-      const i = parseInt(b.dataset.idx, 10) || 0;
-      this.q = '';
-      $('galQ').value = '';
-      $('galPred').classList.add('hide');
-      this.goTo(i);
-    };
-
     $('galPrev').onclick = () => this.step(-1);
     $('galNext').onclick = () => this.step(1);
     $('galFirst').onclick = () => this.goTo(0);
@@ -334,7 +292,7 @@ Screens.gallery = {
     eb.className = 'gallery-edge-bar ' + edgeCls;
 
     this.$('galSlide').innerHTML = '<div class="gal-img-box">' +
-        (p.img ? '<img src="' + p.img + '" alt="' + DB.esc(p.name) + '">' : '<div class="gal-noimg">&#128230;<br><small>لا توجد صورة مرفقة لهذا المنتج</small></div>') +
+        (p.img ? '<img src="' + p.img + '" alt="' + DB.esc(p.name) + '">' : '<div class="gal-noimg">&#128230;<br><small>لا توجد صورة</small></div>') +
       '</div>' +
       '<div class="gal-meta">' +
         '<div class="gal-code">' + DB.esc(p.code) + '</div>' +

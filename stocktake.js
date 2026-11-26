@@ -1,47 +1,16 @@
 Screens.stocktake = {
-  q:'', selectedId:null, counts:{},
+  q:'', counts:{},
   $(id){ return document.getElementById(id); },
 
   render(el){
-    const all = DB.list('products');
-    if (this.selectedId && !all.some(p => p.id === this.selectedId)) this.selectedId = null;
-
     el.innerHTML = UI.topBar('جرد المخزون') +
-      '<p class="big">اختر الصنف من القائمة المنسدلة أو التنبؤ، ثم اكتب الكمية الفعلية الموجودة</p>' +
-      UI.renderProductPicker({ q: this.q, selectedId: this.selectedId }) +
+      '<p class="big">اكتب الكمية الموجودة فعلاً، واترك الخانة فارغة إذا لم تعدّ الصنف</p>' +
+      '<input class="inp" id="q" placeholder="اكتب اسم الصنف" value="' + DB.esc(this.q) + '">' +
       '<div id="rows"></div>' +
       '<div class="box big" id="sum"></div>' +
       '<button class="btn ok" id="apply">اعتماد الجرد</button>' +
       '<button class="btn gray" id="reset">مسح الأرقام</button>';
-
-    const qInp = this.$('q');
-    const dd = this.$('prodDropdown');
-    const predList = this.$('predList');
-
-    dd.onchange = e => {
-      this.selectedId = e.target.value || null;
-      this.q = '';
-      qInp.value = '';
-      predList.classList.add('hide');
-      this.draw();
-    };
-
-    qInp.oninput = e => {
-      this.q = e.target.value;
-      this.updatePredictions();
-    };
-
-    predList.onclick = e => {
-      const btn = e.target.closest('[data-pick-id]');
-      if (!btn) return;
-      this.selectedId = btn.dataset.pickId;
-      this.q = '';
-      qInp.value = '';
-      dd.value = this.selectedId;
-      predList.classList.add('hide');
-      this.draw();
-    };
-
+    this.$('q').oninput = e => { this.q = e.target.value; this.draw(); };
     this.$('rows').oninput = e => {
       const t = e.target;
       if (!t.dataset.id) return;
@@ -52,33 +21,6 @@ Screens.stocktake = {
     };
     this.$('apply').onclick = () => this.apply();
     this.$('reset').onclick = () => { this.counts = {}; this.draw(); };
-    this.draw();
-  },
-
-  updatePredictions(){
-    const predList = this.$('predList');
-    if (!predList) return;
-    const q = this.q.trim();
-    if (!q){
-      predList.classList.add('hide');
-      predList.innerHTML = '';
-      this.draw();
-      return;
-    }
-    const matches = UI.filterProducts(DB.list('products'), q);
-    predList.classList.remove('hide');
-    predList.innerHTML = matches.length
-      ? matches.slice(0, 12).map(p =>
-          '<button type="button" class="pred-item' + (this.selectedId === p.id ? ' active' : '') + '" data-pick-id="' + p.id + '">' +
-            '<span class="pred-name">' + DB.esc(p.name) + ' <small>(' + DB.esc(p.code) + ')</small></span>' +
-            '<span class="pred-meta">في السجل: ' + DB.round(p.qty) + '</span>' +
-          '</button>'
-        ).join('')
-      : '<div class="pred-empty">لا يوجد صنف مطابق</div>';
-
-    if (matches.length === 1){
-      this.selectedId = matches[0].id;
-    }
     this.draw();
   },
 
@@ -98,24 +40,13 @@ Screens.stocktake = {
   },
 
   draw(){
-    const showIds = new Set(Object.keys(this.counts).filter(id => this.counts[id] !== ''));
-    if (this.selectedId) showIds.add(this.selectedId);
-    const list = DB.list('products').filter(p => showIds.has(p.id));
-
-    if (!list.length){
-      this.$('rows').innerHTML = '<div class="box" style="text-align:center;opacity:.85;padding:14px">' +
-        'اختر الصنف المطلوب جرده من <b>القائمة المنسدلة</b> أو <b>خانة التنبؤ</b> بالأعلى.' +
-      '</div>';
-      this.sum();
-      return;
-    }
-
-    this.$('rows').innerHTML = list.map(p => '<div class="box" style="margin-bottom:8px;padding:10px">' +
-      '<div class="line" style="flex-wrap:wrap;border:0;padding:0">' +
-        '<div class="n">' + DB.esc(p.name) + ' <small>(' + DB.esc(p.code) + ')</small><br><small>الكمية في السجل: <b>' + p.qty + '</b></small></div>' +
-        '<input class="inp" style="width:130px;margin:0" type="number" inputmode="decimal" step="any" placeholder="الفعلي" data-id="' + p.id + '" value="' + DB.esc(this.counts[p.id] === undefined ? '' : this.counts[p.id]) + '">' +
-        '<div class="big" id="d' + p.id + '" style="width:100%;margin-top:6px"></div>' +
-      '</div></div>').join('');
+    const q = this.q.trim().toLowerCase();
+    const list = DB.list('products').filter(p => !q || p.name.toLowerCase().includes(q) || String(p.code).toLowerCase().includes(q));
+    this.$('rows').innerHTML = list.map(p => '<div class="line" style="flex-wrap:wrap">' +
+      (p.img ? '<img src="' + p.img + '" style="width:56px;height:56px;object-fit:cover;border-radius:10px" alt="">' : '<span style="font-size:2rem">&#128230;</span>') +
+      '<div class="n">' + DB.esc(p.name) + '<br><small>في السجل: ' + p.qty + '</small></div>' +
+      '<input class="inp" style="width:130px;margin:0" type="number" inputmode="decimal" step="any" data-id="' + p.id + '" value="' + DB.esc(this.counts[p.id] === undefined ? '' : this.counts[p.id]) + '">' +
+      '<div class="big" id="d' + p.id + '" style="width:100%"></div></div>').join('') || '<p class="big">لا توجد أصناف</p>';
     list.forEach(p => this.upd(p));
     this.sum();
   },
@@ -159,8 +90,7 @@ Screens.stocktake = {
     });
     if (res.error) return UI.toast(res.error, true);
     this.counts = {};
-    this.selectedId = null;
-    this.render(document.getElementById('app'));
-    UI.toast('تم اعتماد الجرد وتفريغ الخانات');
+    this.draw();
+    UI.toast('تم اعتماد الجرد');
   }
 };
