@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -20,46 +20,36 @@
 
 <main id="app"></main>
 
-<footer class="footer">تصميم وتطوير: السيد متولي للبرمجة - واتساب: <bdi dir="ltr">&nbsp;01115197980</bdi> <button type="button" class="verbtn" id="verBtn" onclick="Disk.panel()"></button></footer>
+<footer class="footer">تصميم وتطوير: السيد متولي للبرمجة - واتساب: <bdi dir="ltr">&nbsp;01115197980</bdi></footer>
 
 <noscript><div class="box"><h1>⚠️ فعّل JavaScript لتشغيل التطبيق</h1></div></noscript>
 
-<script src="globals.js?v=13"></script>
-<script src="db.js?v=13"></script>
-<script src="disk.js?v=13"></script>
-<script src="license.js?v=13"></script>
-<script src="setup.js?v=13"></script>
-<script src="parties.js?v=13"></script>
-<script src="suppliers.js?v=13"></script>
-<script src="customers.js?v=13"></script>
-<script src="purchases.js?v=13"></script>
-<script src="inventory.js?v=13"></script>
-<script src="stocktake.js?v=13"></script>
-<script src="daily.js?v=13"></script>
-<script src="gallery.js?v=13"></script>
+<script src="globals.js?v=10"></script>
+<script src="db.js?v=10"></script>
+<script src="license.js?v=10"></script>
+<script src="setup.js?v=10"></script>
+<script src="parties.js?v=10"></script>
+<script src="suppliers.js?v=10"></script>
+<script src="customers.js?v=10"></script>
+<script src="purchases.js?v=10"></script>
+<script src="inventory.js?v=10"></script>
+<script src="stocktake.js?v=10"></script>
+<script src="daily.js?v=10"></script>
+<script src="gallery.js?v=10"></script>
 
 <script>
 // لو فشل تحميل globals.js نكمل بدون انهيار، وتظهر رسالة واضحة من boot()
 window.Screens = window.Screens || {};
-window.APP_VERSION = '13';
-(function(){ var b = document.getElementById('verBtn'); if (b) b.textContent = 'إصدار ' + window.APP_VERSION; })();
 
 // ===================== شاشة البيع =====================
 Screens.sale = {
-  cart: {}, rp: {}, q: '', ret: false, _busy: false,
+  cart: {}, q: '', ret: false, _busy: false,
   prune(){
     const ids = new Set(DB.list('products').map(p => p.id));
-    Object.keys(this.cart).forEach(id => { if (!ids.has(id)) { delete this.cart[id]; delete this.rp[id]; } });
+    Object.keys(this.cart).forEach(id => { if (!ids.has(id)) delete this.cart[id]; });
   },
-  /* سعر الإرجاع الافتراضي = سعر آخر بيع للصنف (وليس السعر الحالي)، ويمكن للمستخدم تعديله */
-  retPrice(id){
-    if (this.rp[id] !== undefined && this.rp[id] !== '') return Number(this.rp[id]) || 0;
-    const l = DB.lastSaleLine(id), p = DB.getProduct(id);
-    return l ? Number(l.price) : (p ? p.price : 0);
-  },
-  unit(id){ if (this.ret) return this.retPrice(id); const p = DB.getProduct(id); return p ? p.price : 0; },
-  items(){ return Object.keys(this.cart).map(id => this.ret ? { id, qty:this.cart[id], price:this.retPrice(id) } : { id, qty:this.cart[id] }); },
-  total(){ return DB.round(Object.keys(this.cart).reduce((s, id) => s + this.unit(id) * this.cart[id], 0)); },
+  items(){ return Object.keys(this.cart).map(id => ({id, qty:this.cart[id]})); },
+  total(){ return DB.round(this.items().reduce((s,i) => s + (DB.getProduct(i.id)||{price:0}).price * i.qty, 0)); },
   render(el){
     this.prune();
     el.innerHTML = `<button class="btn gray noprint" onclick="go('home')" style="margin-bottom:10px">⬅️ رجوع للرئيسية</button>
@@ -67,28 +57,23 @@ Screens.sale = {
       <button class="btn warn" id="retBtn"></button>
       <input class="inp" id="q" placeholder="🔍 اكتب اسم الصنف هنا" value="${DB.esc(this.q)}">
       <div class="grid" id="grid"></div></section><aside class="cart" id="cart"></aside></div>`;
-    el.querySelector('#retBtn').onclick = () => { this.ret = !this.ret; this.cart = {}; this.rp = {}; this.drawGrid(); this.drawCart(); };
+    el.querySelector('#retBtn').onclick = () => { this.ret = !this.ret; this.cart = {}; this.drawGrid(); this.drawCart(); };
     el.querySelector('#q').oninput = e => { this.q = e.target.value; this.drawGrid(); };
     el.querySelector('#grid').onclick = e => { const c = e.target.closest('.card'); if (c) this.add(c.dataset.id); };
-    const cart = el.querySelector('#cart');
-    cart.onclick = e => {
+    el.querySelector('#cart').onclick = e => {
       const b = e.target.closest('[data-act]'); if (!b) return;
       const id = b.dataset.id, a = b.dataset.act;
       if (a === 'plus') this.add(id);
       else if (a === 'minus') {
         this.cart[id] = DB.round(this.cart[id]-1);
-        if (this.cart[id] <= 0) { delete this.cart[id]; delete this.rp[id]; }
+        if (this.cart[id] <= 0) delete this.cart[id];
         UI.mark(document.getElementById('grid'), id, this.cart[id] || 0);
         this.drawCart();
       }
-      else if (a === 'del') { delete this.cart[id]; delete this.rp[id]; UI.mark(document.getElementById('grid'), id, 0); this.drawCart(); }
+      else if (a === 'del') { delete this.cart[id]; UI.mark(document.getElementById('grid'), id, 0); this.drawCart(); }
       else if (a === 'top') { const q = document.getElementById('q'); if (q && q.scrollIntoView) q.scrollIntoView({ behavior:'smooth', block:'center' }); }
       else if (a === 'cash') this.cash();
       else if (a === 'credit') this.credit();
-    };
-    cart.oninput = e => {
-      const t = e.target;
-      if (t.dataset.rp && this.cart[t.dataset.rp] !== undefined){ this.rp[t.dataset.rp] = t.value; this.refreshTotals(); }
     };
     this.drawGrid(); this.drawCart();
   },
@@ -107,78 +92,51 @@ Screens.sale = {
     UI.mark(document.getElementById('grid'), id, this.cart[id]);
     this.drawCart();
   },
-  refreshTotals(){
-    const t = this.total(), tot = document.getElementById('stot');
-    if (tot) tot.textContent = DB.money(t);
-    Object.keys(this.cart).forEach(id => {
-      const el = document.querySelector('#cart [data-lt="' + id + '"]');
-      if (el) el.textContent = DB.money(this.unit(id) * this.cart[id]);
-    });
-    UI.cartBar.set({ count: Object.keys(this.cart).length, total: t, label: this.ret ? '↩️ عرض المرتجع والحفظ' : '🧾 عرض الفاتورة والحفظ' });
-  },
   drawCart(){
-    const ids = Object.keys(this.cart), r = this.ret;
-    const rows = ids.map(id => {
-      const p = DB.getProduct(id), q = this.cart[id];
-      const sub = r
-        ? 'صافي المباع المسجّل: ' + DB.netSold(id) + ' — سعره الحالي: ' + DB.money(p.price)
-        : DB.money(p.price) + ' للواحد — المتاح: ' + DB.round(p.qty);
+    const its = this.items(), t = this.total(), r = this.ret;
+    const rows = its.map(i => {
+      const p = DB.getProduct(i.id);
       return `<div class="cline">
         <div class="top">
-          <div class="nm">${DB.esc(p.name)}<small>${sub}</small></div>
-          <button type="button" class="rm" data-act="del" data-id="${id}" aria-label="حذف الصنف">🗑️</button>
+          <div class="nm">${DB.esc(p.name)}<small>${DB.money(p.price)} للواحد${r ? '' : ' — المتاح: ' + DB.round(p.qty)}</small></div>
+          <button type="button" class="rm" data-act="del" data-id="${i.id}" aria-label="حذف الصنف">🗑️</button>
         </div>
         <div class="ctl">
-          <button type="button" class="qb" data-act="minus" data-id="${id}" aria-label="إنقاص">−</button>
-          <span class="qv">${q}</span>
-          <button type="button" class="qb" data-act="plus" data-id="${id}" aria-label="زيادة">+</button>
-          <span class="sum" data-lt="${id}">${DB.money(this.unit(id) * q)}</span>
-        </div>
-        ${r ? `<div class="flds"><div class="fld"><label>سعر الإرجاع للواحد (آخر سعر بيع)</label><input class="inp" type="number" inputmode="decimal" step="any" data-rp="${id}" value="${this.retPrice(id)}"></div></div>` : ''}
-      </div>`;
+          <button type="button" class="qb" data-act="minus" data-id="${i.id}" aria-label="إنقاص">−</button>
+          <span class="qv">${i.qty}</span>
+          <button type="button" class="qb" data-act="plus" data-id="${i.id}" aria-label="زيادة">+</button>
+          <span class="sum">${DB.money(p.price * i.qty)}</span>
+        </div></div>`;
     }).join('');
     const cart = document.getElementById('cart');
     cart.className = 'cart' + (r ? ' ret' : '');
     document.getElementById('retBtn').textContent = r ? '🛒 رجوع للبيع العادي' : '↩️ مرتجع بيع';
     cart.innerHTML = `<div class="cart-head"><h2>${r ? '↩️ فاتورة مرتجع' : '🧺 الفاتورة'}</h2>
-        ${ids.length ? '<button type="button" data-act="top">⬆️ إضافة أصناف</button>' : ''}</div>
+        ${its.length ? '<button type="button" data-act="top">⬆️ إضافة أصناف</button>' : ''}</div>
       ${rows || '<p class="big">اضغط على صورة الصنف لإضافته</p>'}
-      <div class="total" id="stot"></div>
-      ${r ? `<p class="hint">💰 رصيد الخزنة الآن: ${DB.money(DB.getCash())} — الرد النقدي لا يتجاوز رصيد الخزنة</p>` : ''}
+      <div class="total">${DB.money(t)}</div>
       <button class="btn ${r ? 'warn' : 'ok'}" data-act="cash">${r ? '💵 مراجعة ورد المبلغ نقداً' : '💵 مراجعة وبيع نقدي'}</button>
       <button class="btn" data-act="credit">${r ? '📒 مراجعة وخصم من حساب عميل' : '📒 مراجعة وبيع آجل'}</button>`;
-    this.refreshTotals();
+    UI.cartBar.set({ count: its.length, total: t, label: r ? '↩️ عرض المرتجع والحفظ' : '🧾 عرض الفاتورة والحفظ' });
   },
-  done(msg){ this.cart = {}; this.rp = {}; this.drawCart(); this.drawGrid(); UI.toast(msg); },
+  done(msg){ this.cart = {}; this.drawCart(); this.drawGrid(); UI.toast(msg); },
 
-  /* شاشة مراجعة الفاتورة قبل الحفظ النهائي: كل صنف بكميته وسعره وإجماليه + تحذيرات المرتجع */
+  /* شاشة مراجعة الفاتورة قبل الحفظ النهائي: كل صنف بكميته وسعره وإجماليه */
   review(type, cust){
-    const r = this.ret, total = this.total();
-    const lines = this.items().map(i => {
-      const p = DB.getProduct(i.id) || { name:'—', price:0 };
-      let warn = '';
-      if (r){ const net = DB.netSold(i.id); if (i.qty > net) warn = '⚠️ أكبر من صافي المباع المسجّل (' + net + ')'; }
-      return { name:p.name, qty:i.qty, unit: r ? i.price : p.price, warn };
-    });
-    let extra;
-    if (type === 'cash'){
-      extra = [['طريقة الدفع', r ? 'رد نقدي من الخزنة' : 'نقدي — يدخل الخزنة']];
-      if (r) extra.push(['رصيد الخزنة بعد الرد', DB.money(DB.round(DB.getCash() - total))]);
-    } else {
-      extra = [['العميل', cust ? cust.name : '—'], [r ? 'يُخصم من حسابه' : 'يُضاف على حسابه', DB.money(total), 'bad']];
-      const bal = cust ? (Number(cust.balance) || 0) : 0;
-      if (r) extra.push(['رصيده بعد العملية', UI.balText('customers', DB.round(bal - total)), bal - total < 0 ? 'bad' : '']);
-    }
+    const r = this.ret;
+    const lines = this.items().map(i => { const p = DB.getProduct(i.id) || { name:'—', price:0 }; return { name:p.name, qty:i.qty, unit:p.price }; });
+    const extra = type === 'cash'
+      ? [['طريقة الدفع', r ? 'رد نقدي من الخزنة' : 'نقدي — يدخل الخزنة']]
+      : [['العميل', cust ? cust.name : '—'], [r ? 'يُخصم من حسابه' : 'يُضاف على حسابه', DB.money(this.total()), 'bad']];
     return UI.confirmInvoice({
       title: r ? '↩️ مراجعة فاتورة المرتجع' : (type === 'cash' ? '🛒 مراجعة البيع النقدي' : '📒 مراجعة البيع الآجل'),
-      lines, total, extra, cls: r ? 'warn' : 'ok',
+      lines, total: this.total(), extra, cls: r ? 'warn' : 'ok',
       yes: r ? 'تأكيد حفظ المرتجع نهائياً' : 'تأكيد حفظ الفاتورة نهائياً'
     });
   },
   async cash(){
     if (!this.items().length) return UI.toast('الفاتورة فارغة', true);
     if (this._busy) return;
-    if (this.ret && this.total() > DB.getCash()) return UI.toast('رصيد الخزنة (' + DB.money(DB.getCash()) + ') لا يكفي لرد المبلغ — اختر الخصم من حساب عميل أو عدّل السعر', true);
     if (!(await this.review('cash'))) return;
     this._busy = true;
     try {
@@ -191,14 +149,14 @@ Screens.sale = {
     if (!this.items().length) return UI.toast('الفاتورة فارغة', true);
     const custs = DB.list('customers');
     const m = UI.modal(`<h2>اختر العميل</h2>
-      ${custs.map(c => `<button class="btn" data-c="${c.id}">${DB.esc(c.name)}<br><small>${UI.balText('customers', c.balance)}</small></button>`).join('')}
+      ${custs.map(c => `<button class="btn" data-c="${c.id}">${DB.esc(c.name)}<br><small>عليه: ${DB.money(c.balance)}</small></button>`).join('')}
       <h2>➕ عميل جديد</h2>
       <input class="inp" id="cn" placeholder="الاسم"><input class="inp" id="cp" type="tel" placeholder="رقم الهاتف">
       <button class="btn ok" id="cadd">متابعة للمراجعة</button><button class="btn gray" id="cx">رجوع</button>`);
     /* who: {id} لعميل موجود أو {name, phone} لعميل جديد (لا يُحفظ إلا بعد تأكيد الفاتورة) */
     const sell = async who => {
       if (this._busy) return;
-      const cust = who.id ? custs.find(c => c.id === who.id) : { name: who.name, balance: 0 };
+      const cust = who.id ? custs.find(c => c.id === who.id) : { name: who.name };
       if (!(await this.review('credit', cust))) return;      // رجوع للتعديل: تبقى قائمة العملاء مفتوحة
       this._busy = true;
       try {
@@ -223,8 +181,7 @@ function openQuick(screen, opts){
   const s = Screens[screen];
   if (!s) return;
   if (opts){
-    if ('ret' in opts){ s.ret = opts.ret; s.cart = {}; if (s.rp) s.rp = {}; if ('paid' in s) s.paid = null; }
-    else if (s.ret && s.cart && !Object.keys(s.cart).length) s.ret = false;   // دخول من الرئيسية بدون فاتورة معلّقة = وضع عادي
+    if ('ret' in opts){ s.ret = opts.ret; s.cart = {}; if ('paid' in s) s.paid = null; }
     if ('low' in opts) s.low = opts.low;
   }
   go(screen);
@@ -237,7 +194,6 @@ function openQuick(screen, opts){
 Screens.home = {
   render(el){
     el.innerHTML = `
-      <button type="button" class="fs-chip" id="fsChip"></button>
       <div class="dashboard">
         <!-- العمود الأيمن -->
         <div class="dash-panel-right">
@@ -329,7 +285,6 @@ Screens.home = {
     };
 
     if (typeof License !== 'undefined') License.show();
-    if (typeof Disk !== 'undefined') Disk.chip();
   }
 };
 
@@ -374,8 +329,6 @@ function go(name){
 }
 
 function afterLicense(){
-  // أول تشغيل: اختيار مكان الحفظ على الجهاز، ثم نكمل الإعداد/الرئيسية
-  if (typeof Disk !== 'undefined' && !Disk._started){ Disk.start(afterLicense); return; }
   const app = document.getElementById('app');
   if (!DB.isSetupDone()) {
     Setup.render(app, afterLicense); return;
@@ -388,7 +341,6 @@ window.afterLicense = afterLicense;
 const MODULES = [
   ['globals.js',   () => window.UI && window.Screens && Object.keys(window.UI).length],
   ['db.js',        () => typeof DB !== 'undefined'],
-  ['disk.js',      () => typeof Disk !== 'undefined'],
   ['license.js',   () => typeof License !== 'undefined' && typeof License.gate === 'function'],
   ['setup.js',     () => typeof Setup !== 'undefined'],
   ['parties.js',   () => typeof window.makeParties === 'function'],
