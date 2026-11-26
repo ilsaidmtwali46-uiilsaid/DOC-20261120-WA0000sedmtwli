@@ -1,7 +1,7 @@
 Screens.suppliers = makeParties({
-  key:'suppliers', title:'أرصدة الموردين', newTitle:'مورد جديد',
-  totLabel:'إجمالي اللي علينا للموردين', balLabel:'المبلغ اللي علينا له',
-  payLabel:'سداد مبلغ لمورد', docKey:'purchases', docLabel:'فاتورة شراء', retLabel:'مرتجع شراء',
-  link:'supplierId', posColor:'warn', cashDir:-1,
+  key:'suppliers', title:'الموردين', addLabel:'مورد جديد',
+  balLabel:'له علينا', sumLabel:'إجمالي المستحق للموردين',
+  payLabel:'سداد دفعة للمورد', payDone:'سداد', cashSign:-1,
+  link:'supplierId', docLabel:'شراء', docs:() => DB.list('purchases'),
   add: s => DB.addSupplier(s)
 });
