@@ -22,12 +22,13 @@ const DB = {
       if (window.Disk && this.isDataKey(k)) Disk.touch();
       return true;
     } catch(e){
-      if (this._tx) this._txFail = true;
+      if (this._tx) this._txFail = true;           // داخل عملية: نتراجع ونعرض رسالة واحدة من الشاشة
       else alert('الذاكرة ممتلئة! قم بنسخة احتياطية واحذف بعض الصور.');
       return false;
     }
   },
 
+  /* تنفيذ عملية محاسبية كاملة أو لا شيء: لو فشل أي حفظ نرجّع كل المفاتيح كما كانت */
   atomic(fn){
     if (this._tx) return fn();
     const snap = {};
@@ -44,7 +45,7 @@ const DB = {
           else localStorage.setItem(k, snap[k]);
         } catch(_){}
       });
-      return { error: 'تعذر الحفظ. لم تُسجَّل العملية — اعمل نسخة احتياطية.' };
+      return { error: 'تعذر الحفظ (الذاكرة ممتلئة). لم تُسجَّل العملية — اعمل نسخة احتياطية واحذف بعض الصور.' };
     }
     return res;
   },
@@ -58,11 +59,9 @@ const DB = {
     }[c]));
   },
   round(n){ return Math.round((Number(n)||0)*100)/100; },
-
-  /* FIX-09: حذف الأصفار الزائدة بشكل صحيح */
   money(n){
     const v = this.round(n);
-    return (Number.isInteger(v) ? v : v.toFixed(2).replace(/\.?0+$/,'')) + ' جنيه';
+    return (Number.isInteger(v) ? v : v.toFixed(2).replace(/0$/,'')) + ' جنيه';
   },
 
   partyName(key, id, fallback){
@@ -84,7 +83,7 @@ const DB = {
     const limit = 5 * 1024 * 1024;
     if (size > limit * 0.85 && !this._warned){
       this._warned = true;
-      alert('تنبيه: مساحة التخزين تقترب من الامتلاء.');
+      alert('⚠️ تنبيه: مساحة التخزين تقترب من الامتلاء (' + Math.round(size/1024) + ' كيلوبايت).\nيُنصح بنسخة احتياطية ثم حذف الصور القديمة.');
     }
   },
   checkStorageDebounced(){
@@ -92,14 +91,13 @@ const DB = {
     this._stT = setTimeout(() => this.checkStorage(), 400);
   },
 
+  /* مفاتيح البيانات التي تدخل في النسخة الاحتياطية (بدون التفعيل ورقم الجهاز) */
   isDataKey(k){
     return typeof k === 'string' && k.startsWith('gs_') &&
-      k !== this.K.license && k !== this.K.device &&
-      k !== this.K.licenseId && k !== this.K.licenseT &&
-      k !== 'gs_requester_info' &&
-      !k.startsWith('gs_fs_') && !k.startsWith('gs_disk');
+      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId && k !== this.K.licenseT && !k.startsWith('gs_fs_');
   },
 
+  /* لقطة كاملة من بيانات المحل (تُستخدم في النسخة الاحتياطية والحفظ على الجهاز) */
   snapshot(){
     const data = {};
     for (let i = 0; i < localStorage.length; i++){
@@ -125,9 +123,10 @@ const DB = {
     a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
     this.set(this.K.lastBackup, new Date().toISOString());
-    if (window.UI) UI.toast('تم تجهيز النسخة الاحتياطية');
+    if (window.UI) UI.toast('تم تجهيز النسخة الاحتياطية ✔');
   },
 
+  /* استبدال كل بيانات المحل بمحتوى نسخة (مع التراجع لو فشل الحفظ) */
   restoreObject(obj){
     if (!obj || obj.v !== 1 || !obj.data || typeof obj.data !== 'object') throw new Error('ملف غير صالح');
     const keys = Object.keys(obj.data).filter(k => this.isDataKey(k));
@@ -208,6 +207,7 @@ const DB = {
     return !!(sales || purs || pays);
   },
 
+  /* آخر سطر بيع (غير مرتجع) لنفس الصنف: منه نأخذ سعر البيع وتكلفته عند الإرجاع */
   lastSaleLine(productId){
     const sales = this.list('sales');
     for (let i = sales.length - 1; i >= 0; i--){
@@ -218,6 +218,7 @@ const DB = {
     }
     return null;
   },
+  /* صافي المباع من الصنف = كل المبيعات - كل المرتجعات المسجلة */
   netSold(productId){
     let n = 0;
     this.list('sales').forEach(s => (s.items || []).forEach(l => {
@@ -226,8 +227,8 @@ const DB = {
     return this.round(n);
   },
 
-  /* دعم الدفعة المقدمة في البيع الآجل */
-  completeSale(items, type, customerId, meta){
+  /* ============ المبيعات ============ */
+  completeSale(items, type, customerId){
     return this.atomic(() => {
       if (!items || !items.length) return { error: 'الفاتورة فارغة' };
       if (type !== 'cash' && !this.list('customers').some(c => c.id === customerId)) return { error: 'العميل غير موجود' };
@@ -246,49 +247,19 @@ const DB = {
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
-
-      const m = meta || {};
-      let paidNow = 0;
-      if (type === 'cash'){
-        paidNow = total;
-      } else {
-        paidNow = this.round(Number(m.paid) || 0);
-        if (paidNow < 0 || paidNow > total) return { error: 'المبلغ المدفوع غير صحيح' };
-      }
-      const rem = this.round(total - paidNow);
-
       this.save('products', prods);
-      if (paidNow > 0) this.addCash(paidNow);
-      if (type !== 'cash' && rem > 0) this.addBalance('customers', customerId, rem);
-
+      if (type === 'cash') this.addCash(total);
+      else this.addBalance('customers', customerId, total);
       const sales = this.list('sales');
-      const sale = Object.assign({
-        id:this.newId('sale'), date:new Date().toISOString(),
-        type, customerId:customerId||null, items:lines, total,
-        paid: paidNow, remaining: rem
-      }, m);
+      const sale = { id:this.newId('sale'), date:new Date().toISOString(), type, customerId:customerId||null, items:lines, total };
       sales.push(sale); this.save('sales', sales);
       return { sale };
     });
   },
-
-  returnSale(items, type, customerId, meta){
+  returnSale(items, type, customerId){
     return this.atomic(() => {
       if (!items || !items.length) return { error: 'الفاتورة فارغة' };
       if (type !== 'cash' && !this.list('customers').some(c => c.id === customerId)) return { error: 'العميل غير موجود' };
-      if (customerId){
-        const sales = this.list('sales');
-        const soldIds = new Set();
-        sales.filter(s => !s.isReturn && s.customerId === customerId)
-             .forEach(s => (s.items || []).forEach(i => soldIds.add(i.productId)));
-        const notOwned = items.filter(it => !soldIds.has(it.id)).map(it => {
-          const p = this.getProduct(it.id);
-          return p ? p.name : it.id;
-        });
-        if (notOwned.length){
-          return { error: 'هذه الأصناف لم تُبع لهذا العميل: ' + notOwned.join('، ') };
-        }
-      }
       const prods = this.list('products');
       let total = 0;
       const lines = [], missing = [];
@@ -297,32 +268,29 @@ const DB = {
         if (!(qty > 0)) return { error: 'كمية غير صحيحة' };
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
+        // المرتجع يُسعَّر بسعر آخر بيع (أو بسعر كتبه المستخدم) وبتكلفة ذلك البيع، لا بالسعر الحالي
         const last = this.lastSaleLine(p.id);
         const hasPrice = it.price !== undefined && it.price !== null && it.price !== '' && Number(it.price) >= 0;
         const price = hasPrice ? Number(it.price) : (last ? Number(last.price) : p.price);
         const cost = last ? last.cost : p.buy;
+        p.qty = this.round((Number(p.qty) || 0) + qty);
         total += price * qty;
-        lines.push({ productId:p.id, code:p.code, name:p.name, qty, price, cost, _p: p });
+        lines.push({ productId:p.id, code:p.code, name:p.name, qty, price, cost });
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
-      if (type === 'cash' && total > this.getCash()){
-        return { error: 'رصيد الخزنة لا يكفي لرد المبلغ (المتاح ' + this.money(this.getCash()) + ')' };
-      }
-      lines.forEach(l => { l._p.qty = this.round((Number(l._p.qty) || 0) + l.qty); delete l._p; });
+      if (type === 'cash' && total > this.getCash()) return { error: 'رصيد الخزنة لا يكفي لرد المبلغ (المتاح ' + this.money(this.getCash()) + ')' };
       this.save('products', prods);
       if (type === 'cash') this.addCash(-total);
       else this.addBalance('customers', customerId, -total);
       const a = this.list('sales');
-      const r = Object.assign({
-        id:this.newId('ret'), date:new Date().toISOString(),
-        isReturn:true, type, customerId:customerId||null, items:lines, total
-      }, meta || {});
+      const r = { id:this.newId('ret'), date:new Date().toISOString(), isReturn:true, type, customerId:customerId||null, items:lines, total };
       a.push(r); this.save('sales', a);
       return { sale: r };
     });
   },
 
+  /* ============ المشتريات ============ */
   completePurchase(supplierId, items, paid, meta){
     return this.atomic(() => {
       if (!items || !items.length) return { error: 'الفاتورة فارغة' };
@@ -347,9 +315,9 @@ const DB = {
       paid = this.round(paid);
       if (paid < 0 || paid > total) return { error: 'المبلغ المدفوع غير صحيح' };
       if (paid < total && !supplierId) return { error: 'اختر المورد لتسجيل الباقي عليه' };
-      if (paid > this.getCash()) return { error: 'رصيد الخزنة لا يكفي.' };
+      if (paid > this.getCash()) return { error: 'رصيد الخزنة لا يكفي (المتاح ' + this.money(this.getCash()) + '). قلّل المبلغ المدفوع واترك الباقي على المورد.' };
       this.save('products', prods);
-      if (paid > 0) this.addCash(-paid);
+      this.addCash(-paid);
       if (supplierId) this.addBalance('suppliers', supplierId, total - paid);
       const a = this.list('purchases');
       const pur = Object.assign({
@@ -360,7 +328,6 @@ const DB = {
       return { purchase: pur };
     });
   },
-
   returnPurchase(supplierId, items, received, meta){
     return this.atomic(() => {
       if (!items || !items.length) return { error: 'الفاتورة فارغة' };
@@ -374,10 +341,9 @@ const DB = {
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
         if ((Number(p.qty) || 0) < qty) return { error: 'كمية المرتجع أكبر من الموجود: ' + p.name };
-        const buyPrice = it.buyPrice !== undefined ? Number(it.buyPrice) : (Number(p.buy) || 0);
         p.qty = this.round((Number(p.qty) || 0) - qty);
         total += cost * qty;
-        lines.push({ productId:p.id, name:p.name, qty, cost, buyPrice });
+        lines.push({ productId:p.id, name:p.name, qty, cost });
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
@@ -385,7 +351,7 @@ const DB = {
       if (received < 0 || received > total) return { error: 'المبلغ المستلم غير صحيح' };
       if (received < total && !supplierId) return { error: 'اختر المورد لتسجيل الباقي عليه' };
       this.save('products', prods);
-      if (received > 0) this.addCash(received);
+      this.addCash(received);
       if (supplierId) this.addBalance('suppliers', supplierId, -(total - received));
       const a = this.list('purchases');
       const r = Object.assign({

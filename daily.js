@@ -17,76 +17,59 @@ Screens.daily = {
     const purs = DB.list('purchases').filter(s => this.key(s.date) === k);
     const pays = DB.get(DB.K.payments, []).filter(s => this.key(s.date) === k);
     const nm = (key, id, fb) => DB.esc(DB.partyName(key, id, fb));
-
-    let cashSales=0, creditSales=0, creditDownPay=0, retCash=0, retCredit=0, otherSales=0;
-    sales.forEach(s => {
-      const amt = Number(s.total) || 0;
-      if (s.isReturn){
-        if (s.type === 'cash') retCash += amt;
-        else if (s.type === 'credit') retCredit += amt;
-        else otherSales += amt;
-      } else {
-        if (s.type === 'cash') cashSales += amt;
-        else if (s.type === 'credit'){
-          creditSales += amt;
-          creditDownPay += (Number(s.paid) || 0);
-        }
-        else otherSales += amt;
-      }
-    });
-    cashSales = DB.round(cashSales); creditSales = DB.round(creditSales); creditDownPay = DB.round(creditDownPay);
-    retCash = DB.round(retCash); retCredit = DB.round(retCredit); otherSales = DB.round(otherSales);
-
+    const S = c => sum(sales.filter(c), s => s.total);
+    const cashSales = S(s => !s.isReturn && s.type === 'cash');
+    const creditSales = S(s => !s.isReturn && s.type === 'credit');
+    const retCash = S(s => s.isReturn && s.type === 'cash');
+    const retCredit = S(s => s.isReturn && s.type === 'credit');
     const profit = sum(sales, s => (s.isReturn ? -1 : 1) * s.items.reduce((a,i) => a + (i.price - (i.cost || 0)) * i.qty, 0));
     const bp = purs.filter(p => !p.isReturn), rp = purs.filter(p => p.isReturn);
     const buys = sum(bp, p => p.total), buyPaid = sum(bp, p => p.paid);
     const pRet = sum(rp, p => p.total), pRetCash = sum(rp, p => p.received || 0);
     const custIn = sum(pays.filter(p => p.kind === 'customers'), p => p.amount);
     const supOut = sum(pays.filter(p => p.kind === 'suppliers'), p => p.amount);
-    const cin = DB.round(cashSales + creditDownPay + custIn + pRetCash);
+    const cin = DB.round(cashSales + custIn + pRetCash);
     const cout = DB.round(retCash + buyPaid + supOut);
     const netPurchases = DB.round(buys - pRet);
-    const note = (cond, t) => cond ? '<p class="hint" style="margin:6px 0 0">' + t + '</p>' : '';
-    const row = (l,v,c) => '<div class="line"><div class="n">' + l + '</div><b style="' + (c ? 'color:var(--' + c + ')' : '') + '">' + DB.money(v) + '</b></div>';
+    const note = (cond, t) => cond ? `<p class="hint" style="margin:6px 0 0">ℹ️ ${t}</p>` : '';
+    const row = (l,v,c) => `<div class="line"><div class="n">${l}</div><b style="${c ? 'color:var(--' + c + ')' : ''}">${DB.money(v)}</b></div>`;
 
     const ops = [];
-    sales.forEach(s => ops.push({ k:'sale', id:s.id, d:s.date, v:s.total, t:(s.isReturn ? 'مرتجع بيع ' : s.type === 'cash' ? 'بيع نقدي ' : 'بيع آجل ') + (s.customerId ? '(' + nm('customers', s.customerId) + ')' : '') }));
-    purs.forEach(p => ops.push({ k:'purchase', id:p.id, d:p.date, v:p.total, t:(p.isReturn ? 'مرتجع شراء ' : 'شراء ') + (p.supplierId ? '(' + nm('suppliers', p.supplierId, p.supplierName) + ')' : (p.supplierName ? '(' + DB.esc(p.supplierName) + ')' : '')) }));
-    pays.forEach(p => ops.push({ d:p.date, v:p.amount, t: p.kind === 'customers' ? 'استلام من ' + nm('customers', p.party) : 'سداد إلى ' + nm('suppliers', p.party) }));
+    sales.forEach(s => ops.push({ k:'sale', id:s.id, d:s.date, v:s.total, t:(s.isReturn ? '↩️ مرتجع بيع ' : s.type === 'cash' ? '🛒 بيع نقدي ' : '📒 بيع آجل ') + (s.customerId ? '(' + nm('customers', s.customerId) + ')' : '') }));
+    purs.forEach(p => ops.push({ k:'purchase', id:p.id, d:p.date, v:p.total, t:(p.isReturn ? '↩️ مرتجع شراء ' : '📥 شراء ') + (p.supplierId ? '(' + nm('suppliers', p.supplierId, p.supplierName) + ')' : (p.supplierName ? '(' + DB.esc(p.supplierName) + ')' : '')) }));
+    pays.forEach(p => ops.push({ d:p.date, v:p.amount, t: p.kind === 'customers' ? '💵 استلام من ' + nm('customers', p.party) : '💵 سداد إلى ' + nm('suppliers', p.party) }));
     ops.sort((a,b) => a.d.localeCompare(b.d));
 
     const li = (typeof License !== 'undefined') ? License.info : null;
     const who = li ? [li.b || li.s, li.u].filter(Boolean).map(DB.esc.bind(DB)).join(' — ') : '';
     const sts = DB.get(DB.K.stocktakes, []).filter(x => this.key(x.date) === k);
     const stDiff = sum(sts, x => x.totalDiffValue || 0);
-    el.innerHTML = UI.topBar('كشف الحساب اليومي') +
-      (who ? '<p class="big">' + who + '</p>' : '') +
-      '<div class="row noprint"><button class="btn gray" id="prev">اليوم السابق</button><button class="btn gray" id="next">اليوم التالي</button></div>' +
-      '<input class="inp noprint" type="date" id="dt" value="' + k + '">' +
-      '<p class="big">' + new Date(k + 'T12:00:00').toLocaleDateString('ar-EG', { weekday:'long', year:'numeric', month:'long', day:'numeric' }) + '</p>' +
-      '<div class="box"><h2>المبيعات</h2>' + row('بيع نقدي', cashSales) + row('بيع آجل', creditSales) +
-        (creditDownPay > 0 ? row('• مقدم مدفوع من الآجل', creditDownPay) : '') +
-        row('مرتجع المبيعات', retCash + retCredit, 'warn') + row('صافي المبيعات', cashSales + creditSales - retCash - retCredit, 'ok') + row('الربح التقديري', profit, 'ok') + note(cashSales + creditSales - retCash - retCredit < 0, 'الصافي سالب لأن مرتجعات اليوم أكبر من مبيعاته.') + '</div>' +
-      '<div class="box"><h2>المشتريات</h2>' + row('المشتريات', buys) + row('المدفوع منها نقداً', buyPaid) + row('الباقي على الموردين', buys - buyPaid) + row('مرتجع المشتريات', pRet, 'warn') + row('صافي المشتريات', netPurchases) + note(netPurchases < 0, 'الصافي سالب لأن مرتجعات اليوم أكبر من مشترياته.') + '</div>' +
-      '<div class="box"><h2>الدفعات</h2>' + row('استلمنا من العملاء', custIn) + row('سددنا للموردين', supOut) + '</div>' +
-      (sts.length ? '<div class="box"><h2>الجرد</h2>' + row('عدد عمليات الجرد', sts.length).replace(/ جنيه/, '') + row('فرق الجرد (بسعر الشراء)', stDiff, stDiff < 0 ? 'bad' : 'ok') + '</div>' : '') +
-      '<div class="box"><h2>حركة الخزنة</h2><p class="hint" style="margin:0 0 6px">داخل الخزنة:</p>' +
-        row('• مبيعات نقدية', cashSales) +
-        (creditDownPay > 0 ? row('• مقدم بيع آجل', creditDownPay) : '') +
-        row('• تحصيل من العملاء', custIn) + row('• مستلم من مرتجع مشتريات', pRetCash) + row('إجمالي الداخل', cin, 'ok') +
-        '<p class="hint" style="margin:10px 0 6px">خارج الخزنة:</p>' +
-        row('• رد نقدي لمرتجع مبيعات', retCash) + row('• مشتريات مدفوعة', buyPaid) + row('• سداد للموردين', supOut) + row('إجمالي الخارج', cout, 'bad') +
-        row('صافي حركة اليوم', cin - cout) + note(cin - cout < 0, 'السالب هنا معناه أن ما خرج من الخزنة اليوم أكبر مما دخلها.') + row('الخزنة الآن', DB.getCash(), 'ok') + '</div>' +
-      '<div class="box"><h2>عمليات اليوم (' + ops.length + ')</h2>' +
-        (ops.length ? '<p class="hint noprint">اضغط على أي فاتورة لعرض الأصناف والكميات والأسعار</p>' : '') +
-        (ops.map(o => {
+    el.innerHTML = `<button class="btn gray noprint" onclick="go('home')" style="margin-bottom:10px">⬅️ رجوع للرئيسية</button>
+      <h1>📊 كشف الحساب اليومي</h1>
+      ${who ? `<p class="big">${who}</p>` : ''}
+      <div class="row noprint"><button class="btn gray" id="prev">اليوم السابق</button><button class="btn gray" id="next">اليوم التالي</button></div>
+      <input class="inp noprint" type="date" id="dt" value="${k}">
+      <p class="big">📅 ${new Date(k + 'T12:00:00').toLocaleDateString('ar-EG', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</p>
+      <div class="box"><h2>🛒 المبيعات</h2>${row('بيع نقدي', cashSales)}${row('بيع آجل', creditSales)}
+        ${row('مرتجع المبيعات', retCash + retCredit, 'warn')}${row('صافي المبيعات', cashSales + creditSales - retCash - retCredit, 'ok')}${row('الربح التقديري', profit, 'ok')}${note(cashSales + creditSales - retCash - retCredit < 0, 'الصافي سالب لأن مرتجعات اليوم أكبر من مبيعاته (مرتجع لبضاعة بيعت في أيام سابقة).')}</div>
+      <div class="box"><h2>📥 المشتريات</h2>${row('المشتريات', buys)}${row('المدفوع منها نقداً', buyPaid)}${row('الباقي على الموردين', buys - buyPaid)}${row('مرتجع المشتريات', pRet, 'warn')}${row('صافي المشتريات', netPurchases)}${note(netPurchases < 0, 'الصافي سالب لأن مرتجعات اليوم أكبر من مشترياته (مرتجع لبضاعة اشتريت في أيام سابقة).')}</div>
+      <div class="box"><h2>💵 الدفعات</h2>${row('استلمنا من العملاء', custIn)}${row('سددنا للموردين', supOut)}</div>
+      ${sts.length ? `<div class="box"><h2>📋 الجرد</h2>${row('عدد عمليات الجرد', sts.length).replace(/ جنيه/, '')}${row('فرق الجرد (بسعر الشراء)', stDiff, stDiff < 0 ? 'bad' : 'ok')}</div>` : ''}
+      <div class="box"><h2>💰 حركة الخزنة</h2><p class="hint" style="margin:0 0 6px">داخل الخزنة:</p>
+        ${row('• مبيعات نقدية', cashSales)}${row('• تحصيل من العملاء', custIn)}${row('• مستلم من مرتجع مشتريات', pRetCash)}${row('إجمالي الداخل', cin, 'ok')}
+        <p class="hint" style="margin:10px 0 6px">خارج الخزنة:</p>
+        ${row('• رد نقدي لمرتجع مبيعات', retCash)}${row('• مشتريات مدفوعة', buyPaid)}${row('• سداد للموردين', supOut)}${row('إجمالي الخارج', cout, 'bad')}
+        ${row('صافي حركة اليوم', cin - cout)}${note(cin - cout < 0, 'السالب هنا معناه أن ما خرج من الخزنة اليوم أكبر مما دخلها، وليس أن رصيد الخزنة سالب.')}${row('الخزنة الآن', DB.getCash(), 'ok')}</div>
+      <div class="box"><h2>📜 عمليات اليوم (${ops.length})</h2>
+        ${ops.length ? '<p class="hint noprint">اضغط على أي فاتورة لعرض الأصناف والكميات والأسعار</p>' : ''}
+        ${ops.map(o => {
           const tm = new Date(o.d).toLocaleTimeString('ar-EG', { hour:'2-digit', minute:'2-digit' });
           return o.k
-            ? '<button type="button" class="docrow" data-doc="' + o.k + ':' + o.id + '"><div class="dt"><span>' + tm + ' — ' + o.t + '</span><b>' + DB.money(o.v) + '</b></div></button>'
-            : '<div class="line"><div class="n">' + tm + ' — ' + o.t + '</div><b>' + DB.money(o.v) + '</b></div>';
-        }).join('') || '<p class="big">لا توجد عمليات في هذا اليوم</p>') + '</div>' +
-      '<button class="btn noprint" onclick="window.print()">طباعة الكشف</button>';
-    el.querySelectorAll('[data-doc]').forEach(b => b.onclick = () => { const p = b.dataset.doc.split(':'); UI.showDoc(p[0], p[1]); });
+            ? `<button type="button" class="docrow" data-doc="${o.k}:${o.id}"><div class="dt"><span>${tm} — ${o.t}</span><b>${DB.money(o.v)}</b></div></button>`
+            : `<div class="line"><div class="n">${tm} — ${o.t}</div><b>${DB.money(o.v)}</b></div>`;
+        }).join('') || '<p class="big">لا توجد عمليات في هذا اليوم</p>'}</div>
+      <button class="btn noprint" onclick="window.print()">🖨️ طباعة الكشف</button>`;
+    el.querySelectorAll('[data-doc]').forEach(b => b.onclick = () => { const [k, id] = b.dataset.doc.split(':'); UI.showDoc(k, id); });
     document.getElementById('prev').onclick = () => this.shift(-1);
     document.getElementById('next').onclick = () => this.shift(1);
     document.getElementById('dt').onchange = e => { if (e.target.value){ this.day = e.target.value; this.render(el); } };

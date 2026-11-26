@@ -1,5 +1,6 @@
 const Setup = {
   d: null, img: '', onDone: null,
+  /* أول مرة: مسودة محفوظة تلقائياً. بعد الاعتماد: نعدّل على نسخة من البيانات الحالية (في الذاكرة فقط) حتى لا تُمسح البيانات */
   load(){
     if (DB.isSetupDone()){
       this.d = JSON.parse(JSON.stringify({
@@ -14,41 +15,42 @@ const Setup = {
   },
   save(){ return DB.isSetupDone() ? true : DB.set(DB.K.draft, this.d); },
   partyForm(k, title, balLabel){
-    return '<div class="box"><h2>' + title + '</h2>' +
-      '<label>الاسم</label><input class="inp" id="' + k + 'n">' +
-      '<label>رقم الهاتف</label><input class="inp" id="' + k + 'p" type="tel">' +
-      '<label>العنوان</label><input class="inp" id="' + k + 'a">' +
-      '<label>' + balLabel + '</label><input class="inp" id="' + k + 'b" type="number" inputmode="decimal" step="any" value="0">' +
-      '<label>ملاحظات</label><input class="inp" id="' + k + 'o">' +
-      '<button class="btn" id="' + k + 'add">إضافة</button><div id="' + k + 'list"></div></div>';
+    return `<div class="box"><h2>${title}</h2>
+      <label>الاسم</label><input class="inp" id="${k}n">
+      <label>رقم الهاتف</label><input class="inp" id="${k}p" type="tel">
+      <label>العنوان</label><input class="inp" id="${k}a">
+      <label>${balLabel}</label><input class="inp" id="${k}b" type="number" inputmode="decimal" step="any" value="0">
+      <label>ملاحظات</label><input class="inp" id="${k}o">
+      <button class="btn" id="${k}add">➕ إضافة</button><div id="${k}list"></div></div>`;
   },
   render(el, onDone){
     this.load();
     this.img = '';
     this.onDone = onDone;
-    const head = DB.isSetupDone() ? UI.topBar('تجهيز وإعداد المحل') : '<h1>تجهيز المحل لأول مرة</h1>';
-    el.innerHTML = head +
-      '<div class="box"><h2>1) فلوس الخزنة الآن</h2>' +
-        '<input class="inp" id="cash" type="number" inputmode="decimal" step="any" placeholder="0" value="' + DB.esc(this.d.cash) + '"></div>' +
-      '<div class="box"><h2>2) الأصناف الموجودة</h2>' +
-        '<div class="codebox" id="pcode"></div>' +
-        '<img id="pprev" class="preview hide" alt="">' +
-        '<div class="row">' +
-          '<button class="btn warn" id="shoot">تصوير</button>' +
-          '<button class="btn gray" id="pick">اختيار صورة</button>' +
-        '</div>' +
-        '<input type="file" id="f1" accept="image/*" capture="environment" class="hide">' +
-        '<input type="file" id="f2" accept="image/*" class="hide">' +
-        '<label>اسم الصنف</label><input class="inp" id="pn">' +
-        '<label>سعر الشراء</label><input class="inp" id="pb" type="number" inputmode="decimal" step="any">' +
-        '<label>سعر البيع</label><input class="inp" id="ps" type="number" inputmode="decimal" step="any">' +
-        '<label>الكمية</label><input class="inp" id="pq" type="number" inputmode="decimal" step="any">' +
-        '<label>أقل كمية</label><input class="inp" id="pm" type="number" inputmode="decimal" step="any" value="5">' +
-        '<button class="btn ok" id="padd">إضافة الصنف</button>' +
-        '<div class="grid" id="plist"></div></div>' +
-      this.partyForm('supplier','3) الموردين','المبلغ اللي علينا له') +
-      this.partyForm('customer','4) العملاء','المبلغ اللي عليه لنا') +
-      '<button class="btn ok" id="finish">اعتماد البيانات وبدء العمل</button>';
+    el.innerHTML = `
+      ${DB.isSetupDone() ? '<button class="btn gray noprint" onclick="go(\'home\')" style="margin-bottom:10px">⬅️ رجوع للرئيسية</button>' : ''}
+      <h1>🏪 تجهيز المحل لأول مرة</h1>
+      <div class="box"><h2>1) 💰 فلوس الخزنة الآن</h2>
+        <input class="inp" id="cash" type="number" inputmode="decimal" step="any" placeholder="0" value="${DB.esc(this.d.cash)}"></div>
+      <div class="box"><h2>2) 📦 الأصناف الموجودة</h2>
+        <div class="codebox" id="pcode"></div>
+        <img id="pprev" class="preview hide" alt="">
+        <div class="row">
+          <button class="btn warn" id="shoot">📷 تصوير</button>
+          <button class="btn gray" id="pick">🖼️ اختيار صورة</button>
+        </div>
+        <input type="file" id="f1" accept="image/*" capture="environment" class="hide">
+        <input type="file" id="f2" accept="image/*" class="hide">
+        <label>اسم الصنف</label><input class="inp" id="pn">
+        <label>سعر الشراء</label><input class="inp" id="pb" type="number" inputmode="decimal" step="any">
+        <label>سعر البيع</label><input class="inp" id="ps" type="number" inputmode="decimal" step="any">
+        <label>الكمية</label><input class="inp" id="pq" type="number" inputmode="decimal" step="any">
+        <label>أقل كمية</label><input class="inp" id="pm" type="number" inputmode="decimal" step="any" value="5">
+        <button class="btn ok" id="padd">➕ إضافة الصنف</button>
+        <div class="grid" id="plist"></div></div>
+      ${this.partyForm('supplier','3) 🚚 الموردين','المبلغ اللي علينا له')}
+      ${this.partyForm('customer','4) 👥 العملاء','المبلغ اللي عليه لنا')}
+      <button class="btn ok" id="finish">✅ اعتماد البيانات وبدء العمل</button>`;
 
     const $ = id => el.querySelector('#' + id);
     $('cash').oninput = e => { this.d.cash = e.target.value; this.save(); };
@@ -95,13 +97,13 @@ const Setup = {
       ['pn','pb','ps','pq'].forEach(i => $(i).value = '');
       $('pm').value = 5;
       drawProducts(); showCode();
-      UI.toast('تمت الإضافة');
+      UI.toast('تمت الإضافة ✔');
     };
 
     [['supplier','suppliers'],['customer','customers']].forEach(([k, arr]) => {
       const draw = () => {
-        $(k + 'list').innerHTML = this.d[arr].map(x => '<div class="line"><div class="n">' + DB.esc(x.name) + ' — ' + DB.money(x.balance) + '</div>' +
-          '<button data-del="' + x.id + '" style="color:var(--bad)">✖</button></div>').join('');
+        $(k + 'list').innerHTML = this.d[arr].map(x => `<div class="line"><div class="n">${DB.esc(x.name)} — ${DB.money(x.balance)}</div>
+          <button data-del="${x.id}" style="color:var(--bad)">✖</button></div>`).join('');
         $(k + 'list').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
           this.d[arr] = this.d[arr].filter(x => x.id !== b.dataset.del);
           this.save(); draw();
@@ -123,7 +125,7 @@ const Setup = {
         ['n','p','a','o'].forEach(s => $(k + s).value = '');
         $(k + 'b').value = 0;
         draw();
-        UI.toast('تمت الإضافة');
+        UI.toast('تمت الإضافة ✔');
       };
     });
 
@@ -133,7 +135,7 @@ const Setup = {
       }
       const again = DB.isSetupDone();
       const ok = await UI.confirm(again
-        ? 'سيتم استبدال الخزنة والأصناف والموردين والعملاء الحالية. متأكد؟'
+        ? '⚠️ سيتم استبدال الخزنة والأصناف والموردين والعملاء الحالية بما هو ظاهر في هذه الشاشة. متأكد؟'
         : 'اعتماد البيانات وبدء العمل؟', again ? 'نعم، اعتمد' : 'نعم، ابدأ', 'رجوع');
       if (!ok) return;
       const res = DB.atomic(() => {
