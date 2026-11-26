@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="style.css?v=16">
+<link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
 
@@ -23,26 +23,25 @@
 
 <noscript><div class="box"><h1>فعّل JavaScript لتشغيل التطبيق</h1></div></noscript>
 
-<script src="globals.js?v=16"></script>
-<script src="db.js?v=16"></script>
-<script src="disk.js?v=16"></script>
-<script src="license.js?v=16"></script>
-<script src="setup.js?v=16"></script>
-<script src="parties.js?v=16"></script>
-<script src="suppliers.js?v=16"></script>
-<script src="customers.js?v=16"></script>
-<script src="purchases.js?v=16"></script>
-<script src="inventory.js?v=16"></script>
-<script src="stocktake.js?v=16"></script>
-<script src="daily.js?v=16"></script>
-<script src="gallery.js?v=16"></script>
+<script src="globals.js?v=17"></script>
+<script src="db.js?v=17"></script>
+<script src="disk.js?v=17"></script>
+<script src="license.js?v=17"></script>
+<script src="setup.js?v=17"></script>
+<script src="parties.js?v=17"></script>
+<script src="suppliers.js?v=17"></script>
+<script src="customers.js?v=17"></script>
+<script src="purchases.js?v=17"></script>
+<script src="inventory.js?v=17"></script>
+<script src="stocktake.js?v=17"></script>
+<script src="daily.js?v=17"></script>
+<script src="gallery.js?v=17"></script>
 
 <script>
 window.Screens = window.Screens || {};
-window.APP_VERSION = '16';
+window.APP_VERSION = '17';
 (function(){ var b = document.getElementById('verBtn'); if (b) b.textContent = 'إصدار ' + window.APP_VERSION; })();
 
-/* إدارة التنقل وزر الرجوع الخاص بالجهاز للعودة خطوة واحدة */
 window._Nav = {
   stack: ['home'],
   _ignorePop: 0,
@@ -70,11 +69,7 @@ window.addEventListener('popstate', () => {
     window._Nav._ignorePop--;
     return;
   }
-  /* 1. إغلاق أعلى نافذة منبثقة إن وجدت */
-  if (window.UI && UI.closeTopModal && UI.closeTopModal()){
-    return;
-  }
-  /* 2. إغلاق وضع ملء الشاشة في المعرض إن كان مفتوحاً */
+  if (window.UI && UI.closeTopModal && UI.closeTopModal()) return;
   if (Screens.gallery && typeof Screens.gallery.closeFs === 'function'){
     const fs = document.getElementById('galFs');
     if (fs && !fs.classList.contains('hide')){
@@ -82,23 +77,22 @@ window.addEventListener('popstate', () => {
       return;
     }
   }
-  /* 3. الرجوع خطوة للخلف في شاشات التطبيق */
   if (window._Nav.stack.length > 1){
     window._Nav.stack.pop();
     const prev = window._Nav.stack[window._Nav.stack.length - 1] || 'home';
     go(prev, true);
   } else {
-    /* البقاء داخل التطبيق وعدم الخروج المفاجئ */
     window._Nav.push('home');
   }
 });
 
 Screens.sale = {
-  cart: {}, rp: {}, q: '', ret: false, payType: 'cash', paidInput: '', customerId: null, _busy: false,
+  cart: {}, rp: {}, q: '', selectedId: null, ret: false, payType: 'cash', paidInput: '', customerId: null, _busy: false,
   custInfo(){ return DB.list('customers').find(x => x.id === this.customerId) || null; },
   prune(){
     const ids = new Set(DB.list('products').map(p => p.id));
     Object.keys(this.cart).forEach(id => { if (!ids.has(id)) { delete this.cart[id]; delete this.rp[id]; } });
+    if (this.selectedId && !ids.has(this.selectedId)) this.selectedId = null;
     if (this.customerId && !this.custInfo()) this.customerId = null;
   },
   retPrice(id){
@@ -116,29 +110,76 @@ Screens.sale = {
     const toggleBtn = '<button type="button" class="btn ' + (this.ret ? 'ok' : 'warn') + '" id="retBtn">' + (this.ret ? 'البيع العادي' : 'مرتجع بيع') + '</button>';
     el.innerHTML = UI.topBar(title, toggleBtn) +
     '<div class="sale"><section>' +
-      '<input class="inp" id="q" placeholder="اكتب اسم الصنف أو الكود هنا" value="' + DB.esc(this.q) + '">' +
-      '<div class="grid" id="grid"></div></section><aside class="cart" id="cart"></aside></div>';
+      UI.renderProductPicker({ q: this.q, selectedId: this.selectedId }) +
+      '<div id="selectedZone"></div>' +
+    '</section><aside class="cart" id="cart"></aside></div>';
 
     el.querySelector('#retBtn').onclick = () => {
       this.ret = !this.ret;
       this.resetFields();
       this.render(el);
     };
-    el.querySelector('#q').oninput = e => { this.q = e.target.value; this.drawGrid(); };
-    el.querySelector('#grid').onclick = e => { const c = e.target.closest('.card'); if (c) this.add(c.dataset.id); };
+
+    const qInp = el.querySelector('#q');
+    const dd = el.querySelector('#prodDropdown');
+    const predList = el.querySelector('#predList');
+
+    dd.onchange = e => {
+      const id = e.target.value;
+      if (!id) return;
+      this.selectedId = id;
+      this.q = '';
+      qInp.value = '';
+      predList.classList.add('hide');
+      this.add(id);
+      this.drawSelected();
+    };
+
+    qInp.oninput = e => {
+      this.q = e.target.value;
+      this.updatePredictions();
+    };
+
+    predList.onclick = e => {
+      const btn = e.target.closest('[data-pick-id]');
+      if (!btn) return;
+      const id = btn.dataset.pickId;
+      this.selectedId = id;
+      this.q = '';
+      qInp.value = '';
+      dd.value = id;
+      predList.classList.add('hide');
+      this.add(id);
+      this.drawSelected();
+    };
+
+    el.querySelector('#selectedZone').onclick = e => {
+      const c = e.target.closest('.card');
+      if (c) {
+        this.add(c.dataset.id);
+        this.drawSelected();
+      }
+    };
 
     const cart = el.querySelector('#cart');
     cart.onclick = e => {
       const b = e.target.closest('[data-act]'); if (!b) return;
       const id = b.dataset.id, a = b.dataset.act;
-      if (a === 'plus') this.add(id);
+      if (a === 'plus'){
+        this.add(id);
+        this.drawSelected();
+      }
       else if (a === 'minus') {
         this.cart[id] = DB.round(this.cart[id]-1);
         if (this.cart[id] <= 0) { delete this.cart[id]; delete this.rp[id]; }
-        UI.mark(document.getElementById('grid'), id, this.cart[id] || 0);
+        this.drawSelected();
         this.drawCart();
       }
-      else if (a === 'del') { delete this.cart[id]; delete this.rp[id]; UI.mark(document.getElementById('grid'), id, 0); this.drawCart(); }
+      else if (a === 'del') {
+        delete this.cart[id]; delete this.rp[id];
+        this.drawSelected();
+        this.drawCart();
+      }
       else if (a === 'newCust') this.openNewCustomerModal();
       else if (a === 'top') { const q = document.getElementById('q'); if (q && q.scrollIntoView) q.scrollIntoView({ behavior:'smooth', block:'center' }); }
       else if (a === 'submit') this.submit();
@@ -150,7 +191,6 @@ Screens.sale = {
         this.drawCart();
       } else if (t.id === 'saleTypeSelect'){
         this.payType = t.value;
-        /* خانة المدفوع في حالة الآجل تبدأ فارغة لسهولة تحديد المبلغ */
         this.paidInput = '';
         this.drawCart();
       }
@@ -165,18 +205,67 @@ Screens.sale = {
         this.refreshTotals();
       }
     };
-    this.drawGrid(); this.drawCart();
+    this.drawSelected();
+    this.drawCart();
+  },
+
+  updatePredictions(){
+    const predList = document.getElementById('predList');
+    if (!predList) return;
+    const q = this.q.trim();
+    if (!q){
+      predList.classList.add('hide');
+      predList.innerHTML = '';
+      this.drawSelected();
+      return;
+    }
+    const matches = UI.filterProducts(DB.list('products'), q);
+    predList.classList.remove('hide');
+    predList.innerHTML = matches.length
+      ? matches.slice(0, 12).map(p =>
+          '<button type="button" class="pred-item' + (this.selectedId === p.id ? ' active' : '') + '" data-pick-id="' + p.id + '">' +
+            '<span class="pred-name">' + DB.esc(p.name) + ' <small>(' + DB.esc(p.code) + ')</small></span>' +
+            '<span class="pred-meta">' + DB.money(p.price) + ' • متاح: ' + DB.round(p.qty) + '</span>' +
+          '</button>'
+        ).join('')
+      : '<div class="pred-empty">لا يوجد صنف مطابق</div>';
+
+    if (matches.length === 1){
+      this.selectedId = matches[0].id;
+    }
+    this.drawSelected();
+  },
+
+  drawSelected(){
+    const zone = document.getElementById('selectedZone');
+    if (!zone) return;
+    const p = this.selectedId ? DB.getProduct(this.selectedId) : null;
+    if (!p){
+      zone.innerHTML = '<div class="box" style="text-align:center;opacity:.85;padding:14px">' +
+        'اختر الصنف المطلوب من <b>القائمة المنسدلة</b> أو اكتب اسمه في <b>خانة التنبؤ</b> ليظهر هنا وتتم إضافته للفاتورة.' +
+      '</div>';
+      return;
+    }
+    zone.innerHTML = '<div style="margin-bottom:8px">' +
+      '<div class="hint" style="margin-bottom:4px">الصنف المحدد حالياً (اضغط لزيادة الكمية):</div>' +
+      UI.card(p, false, this.cart[p.id] || 0) +
+    '</div>';
   },
 
   resetFields(){
     this.cart = {};
     this.rp = {};
     this.q = '';
+    this.selectedId = null;
     this.customerId = null;
     this.paidInput = '';
     this.payType = 'cash';
     const qEl = document.getElementById('q');
     if (qEl) qEl.value = '';
+    const dd = document.getElementById('prodDropdown');
+    if (dd) dd.value = '';
+    const pl = document.getElementById('predList');
+    if (pl) { pl.classList.add('hide'); pl.innerHTML = ''; }
   },
 
   openNewCustomerModal(){
@@ -203,20 +292,11 @@ Screens.sale = {
     };
   },
 
-  drawGrid(){
-    const q = this.q.trim().toLowerCase();
-    const list = DB.list('products').filter(p => !q || p.name.toLowerCase().includes(q) || String(p.code).toLowerCase().includes(q));
-    document.getElementById('grid').innerHTML = list.length
-      ? list.map(p => UI.card(p, false, this.cart[p.id] || 0)).join('')
-      : '<p class="big">لا توجد أصناف</p>';
-  },
-
   add(id){
     const p = DB.getProduct(id), cur = this.cart[id] || 0;
     if (!p) return;
     if (!this.ret && cur + 1 > p.qty) return UI.toast('الكمية المتاحة لا تكفي', true);
     this.cart[id] = DB.round(cur + 1);
-    UI.mark(document.getElementById('grid'), id, this.cart[id]);
     this.drawCart();
   },
 
@@ -230,7 +310,6 @@ Screens.sale = {
       if (el) el.textContent = DB.money(this.unit(id) * this.cart[id]);
     });
 
-    /* تحديث خانة الباقي تلقائياً في حالة الآجل */
     const remEl = document.getElementById('saleRemVal');
     if (remEl){
       const paidVal = this.paidInput === '' ? 0 : (parseFloat(this.paidInput) || 0);
@@ -297,7 +376,7 @@ Screens.sale = {
         '</div>' +
         (c ? '<p class="big" style="font-size:.95rem;margin:6px 0 0">' + UI.balText('customers', c.balance) + (c.phone ? ' | ' + DB.esc(c.phone) : '') + '</p>' : '') +
       '</div>' +
-      (rows || '<p class="big">اضغط على صورة الصنف لإضافته</p>') +
+      (rows || '<p class="big">اختر الصنف من القائمة المنسدلة أو التنبؤ لإضافته</p>') +
       '<div class="box" style="margin:10px 0;padding:10px">' +
         '<div class="line" style="border:0;padding:2px 0"><div class="n" style="font-size:1.1rem">الإجمالي التلقائي</div><b id="stot" style="font-size:1.35rem;color:var(--ok)">0 جنيه</b></div>' +
       '</div>' +
@@ -311,8 +390,8 @@ Screens.sale = {
 
   done(msg){
     this.resetFields();
+    this.drawSelected();
     this.drawCart();
-    this.drawGrid();
     UI.toast(msg);
   },
 

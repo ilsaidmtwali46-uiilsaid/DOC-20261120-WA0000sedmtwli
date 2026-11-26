@@ -2,13 +2,94 @@ window.Screens = {};
 window.UI = {
   _modals: [],
 
-  /* شريط علوي موحد وثابت: زر الرئيسية + عنوان الصفحة */
-  topBar(title, rightHtml){
+  topBar(title, rightHtml, hideGalleryBtn){
+    const galBtn = hideGalleryBtn ? '' : '<button type="button" class="btn" onclick="go(\'gallery\')" title="فتح معرض الصور">&#128444; المعرض</button>';
+    const rightGroup = (rightHtml || galBtn)
+      ? '<div class="bar-actions">' + (rightHtml || '') + galBtn + '</div>'
+      : '<div class="page-spacer"></div>';
     return '<div class="sticky-pagebar noprint">' +
       '<button type="button" class="btn gray" onclick="go(\'home\')">الرئيسية</button>' +
       '<div class="page-title">' + DB.esc(title) + '</div>' +
-      (rightHtml || '<div class="page-spacer"></div>') +
+      rightGroup +
     '</div>';
+  },
+
+  renderProductPicker(opts){
+    const o = opts || {};
+    const prods = DB.list('products');
+    const selectedId = o.selectedId || '';
+    const q = o.q || '';
+    const filtered = this.filterProducts(prods, q);
+
+    const dropOpts = '<option value="">— اختر الصنف من القائمة المنسدلة (' + prods.length + ') —</option>' +
+      prods.map(p => {
+        const st = (Number(p.qty) || 0) <= 0 ? ' [نفذ]' : ' [متاح: ' + DB.round(p.qty) + ']';
+        return '<option value="' + p.id + '" ' + (selectedId === p.id ? 'selected' : '') + '>' +
+          DB.esc(p.name) + ' (' + DB.esc(p.code) + ') — ' + DB.money(p.price) + st +
+        '</option>';
+      }).join('');
+
+    const suggestItems = q.trim()
+      ? (filtered.length
+          ? filtered.slice(0, 12).map(p =>
+              '<button type="button" class="pred-item' + (selectedId === p.id ? ' active' : '') + '" data-pick-id="' + p.id + '">' +
+                '<span class="pred-name">' + DB.esc(p.name) + ' <small>(' + DB.esc(p.code) + ')</small></span>' +
+                '<span class="pred-meta">' + DB.money(p.price) + ' • متاح: ' + DB.round(p.qty) + '</span>' +
+              '</button>'
+            ).join('')
+          : '<div class="pred-empty">لا يوجد صنف مطابق لـ «' + DB.esc(q) + '»</div>')
+      : '';
+
+    return '<div class="box picker-box" style="padding:10px;margin-bottom:10px">' +
+      '<label style="margin-top:0">اختر الصنف (قائمة منسدلة)</label>' +
+      '<div class="row" style="margin-bottom:8px">' +
+        '<select class="inp" id="prodDropdown" style="margin:0">' + dropOpts + '</select>' +
+        (o.allowAdd ? '<button type="button" class="btn ok" id="addItemBtn" style="flex:none;width:auto;margin:0;padding:11px 14px">+ صنف</button>' : '') +
+      '</div>' +
+      '<label style="margin-top:0">أو اكتب اسم الصنف / الكود للتنبؤ الفوري</label>' +
+      '<div class="pred-wrap">' +
+        '<input class="inp" id="q" autocomplete="off" placeholder="ابدأ بكتابة اسم الصنف..." value="' + DB.esc(q) + '" style="margin-bottom:0">' +
+        '<div class="pred-list' + (q.trim() ? '' : ' hide') + '" id="predList">' + suggestItems + '</div>' +
+      '</div>' +
+    '</div>';
+  },
+
+  filterProducts(list, q){
+    const nq = DB.normName(q);
+    if (!nq) return list;
+    return list.filter(p =>
+      DB.normName(p.name).includes(nq) ||
+      String(p.code || '').toLowerCase().includes(nq)
+    );
+  },
+
+  card(p, withDel, inCart){
+    const q = Number(p.qty) || 0;
+    const mn = Number(p.min) || 0;
+    const cls = q <= 0 ? 'out' : (q <= mn ? 'low' : '');
+    const warn = q <= 0 ? 'نفذت الكمية' : (q <= mn ? 'كمية قليلة: ' + q : 'المتاح: ' + q);
+    const inc = Number(inCart) || 0;
+    return '<div class="card no-photo ' + cls + (inc > 0 ? ' sel' : '') + '" data-id="' + p.id + '">' +
+      (inc > 0 ? '<span class="inc">بالفاتورة: ' + inc + '</span>' : '') +
+      '<div class="code">' + DB.esc(p.code) + '</div>' +
+      '<div class="name">' + DB.esc(p.name) + '</div>' +
+      '<div class="price">سعر البيع: ' + DB.money(p.price) + '</div>' +
+      '<div class="qty">' + warn + '</div>' +
+      (withDel ? '<button type="button" class="xdel" data-del="' + p.id + '">حذف</button>' : '') + '</div>';
+  },
+
+  mark(container, id, qty){
+    const c = container && container.querySelector('.card[data-id="' + id + '"]');
+    if (!c) return;
+    let b = c.querySelector('.inc');
+    if (qty > 0){
+      if (!b){ b = document.createElement('span'); b.className = 'inc'; c.insertBefore(b, c.firstChild); }
+      b.textContent = 'بالفاتورة: ' + qty;
+      c.classList.add('sel');
+    } else {
+      if (b) b.remove();
+      c.classList.remove('sel');
+    }
   },
 
   toast(msg, bad){
@@ -16,7 +97,7 @@ window.UI = {
     t.className = 'toast' + (bad ? ' bad' : '');
     t.textContent = msg;
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2200);
+    setTimeout(() => t.remove(), 2400);
   },
 
   modal(html){
@@ -63,34 +144,7 @@ window.UI = {
     if (kind === 'customers') return v >= 0 ? 'عليه لنا: ' + DB.money(v) : 'رصيد دائن له عندنا: ' + DB.money(-v);
     return v >= 0 ? 'له علينا: ' + DB.money(v) : 'رصيد دائن لنا عنده: ' + DB.money(-v);
   },
-  card(p, withDel, inCart){
-    const q = Number(p.qty) || 0;
-    const mn = Number(p.min) || 0;
-    const cls = q <= 0 ? 'out' : (q <= mn ? 'low' : '');
-    const warn = q <= 0 ? 'نفذت' : (q <= mn ? 'قليلة: ' + q : 'المتاح: ' + q);
-    const inc = Number(inCart) || 0;
-    return '<div class="card ' + cls + (inc > 0 ? ' sel' : '') + '" data-id="' + p.id + '">' +
-      (inc > 0 ? '<span class="inc">' + inc + '</span>' : '') +
-      (p.img ? '<img src="' + p.img + '" alt="">' : '<div class="noimg">&#128230;</div>') +
-      '<div class="code">' + DB.esc(p.code) + '</div>' +
-      '<div class="name">' + DB.esc(p.name) + '</div>' +
-      '<div class="price">' + DB.money(p.price) + '</div>' +
-      '<div class="qty">' + warn + '</div>' +
-      (withDel ? '<button type="button" class="xdel" data-del="' + p.id + '">حذف</button>' : '') + '</div>';
-  },
-  mark(grid, id, qty){
-    const c = grid && grid.querySelector('.card[data-id="' + id + '"]');
-    if (!c) return;
-    let b = c.querySelector('.inc');
-    if (qty > 0){
-      if (!b){ b = document.createElement('span'); b.className = 'inc'; c.insertBefore(b, c.firstChild); }
-      b.textContent = qty;
-      c.classList.add('sel');
-    } else {
-      if (b) b.remove();
-      c.classList.remove('sel');
-    }
-  },
+
   cartBar: {
     el: null, io: null, want: false,
     set(o){

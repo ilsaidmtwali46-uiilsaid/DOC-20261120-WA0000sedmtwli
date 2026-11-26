@@ -1,5 +1,5 @@
 Screens.purchases = {
-  cart:{}, q:'', ret:false, supplierId:null, paid:null, invoiceImg:'', _busy:false,
+  cart:{}, q:'', selectedId:null, ret:false, supplierId:null, paid:null, invoiceImg:'', _busy:false,
   payType:'cash', payPlan:'once', installmentsCount:2, collectionDates:[], returnPayMethod:'cash', returnCollectionDate:'',
   $(id){ return document.getElementById(id); },
 
@@ -31,6 +31,7 @@ Screens.purchases = {
   resetFields(){
     this.cart = {};
     this.q = '';
+    this.selectedId = null;
     this.supplierId = null;
     this.paid = null;
     this.invoiceImg = '';
@@ -48,6 +49,7 @@ Screens.purchases = {
   prune(){
     const ids = new Set(DB.list('products').map(p => p.id));
     Object.keys(this.cart).forEach(id => { if (!ids.has(id)) delete this.cart[id]; });
+    if (this.selectedId && !ids.has(this.selectedId)) this.selectedId = null;
   },
 
   render(el){
@@ -58,11 +60,8 @@ Screens.purchases = {
 
     el.innerHTML = UI.topBar(title, switchBtn) +
       '<div class="sale"><section>' +
-        '<div class="row" style="margin-bottom:4px">' +
-          '<input class="inp" style="margin:0" id="q" placeholder="اكتب اسم الصنف هنا" value="' + DB.esc(this.q) + '">' +
-          '<button type="button" class="btn ok" id="addItemBtn" style="flex:none;width:auto;margin:0;padding:11px 16px">+ صنف</button>' +
-        '</div>' +
-        '<div class="grid" id="grid"></div>' +
+        UI.renderProductPicker({ q: this.q, selectedId: this.selectedId, allowAdd: true }) +
+        '<div id="selectedZone"></div>' +
         '<div class="box" style="margin-top:14px">' +
           '<h2>صورة الفاتورة</h2>' +
           '<img id="invPrev" class="preview ' + (this.invoiceImg ? '' : 'hide') + '" ' + (this.invoiceImg ? 'src="' + this.invoiceImg + '"' : '') + ' alt="">' +
@@ -77,9 +76,47 @@ Screens.purchases = {
       '</section>' +
       '<aside class="cart" id="cart"></aside></div>';
 
-    this.$('q').oninput = e => { this.q = e.target.value; this.drawGrid(); };
-    this.$('addItemBtn').onclick = () => this.openQuickAddItem();
-    this.$('grid').onclick = e => { const c = e.target.closest('.card'); if (c) this.add(c.dataset.id); };
+    const qInp = this.$('q');
+    const dd = this.$('prodDropdown');
+    const predList = this.$('predList');
+
+    dd.onchange = e => {
+      const id = e.target.value;
+      if (!id) return;
+      this.selectedId = id;
+      this.q = '';
+      qInp.value = '';
+      predList.classList.add('hide');
+      this.add(id);
+      this.drawSelected();
+    };
+
+    qInp.oninput = e => {
+      this.q = e.target.value;
+      this.updatePredictions();
+    };
+
+    predList.onclick = e => {
+      const btn = e.target.closest('[data-pick-id]');
+      if (!btn) return;
+      const id = btn.dataset.pickId;
+      this.selectedId = id;
+      this.q = '';
+      qInp.value = '';
+      dd.value = id;
+      predList.classList.add('hide');
+      this.add(id);
+      this.drawSelected();
+    };
+
+    if (this.$('addItemBtn')) this.$('addItemBtn').onclick = () => this.openQuickAddItem();
+    this.$('selectedZone').onclick = e => {
+      const c = e.target.closest('.card');
+      if (c) {
+        this.add(c.dataset.id);
+        this.drawSelected();
+      }
+    };
 
     this.$('invShoot').onclick = () => this.$('invF1').click();
     this.$('invPick').onclick = () => this.$('invF2').click();
@@ -101,7 +138,11 @@ Screens.purchases = {
     cart.onclick = e => {
       const b = e.target.closest('[data-act]'); if (!b) return;
       const a = b.dataset.act;
-      if (a === 'del'){ delete this.cart[b.dataset.id]; UI.mark(this.$('grid'), b.dataset.id, 0); this.drawCart(); }
+      if (a === 'del'){
+        delete this.cart[b.dataset.id];
+        this.drawSelected();
+        this.drawCart();
+      }
       else if (a === 'newSup') this.openNewSupplierModal();
       else if (a === 'save') this.save();
       else if (a === 'top'){ const q = this.$('q'); if (q && q.scrollIntoView) q.scrollIntoView({ behavior:'smooth', block:'center' }); }
@@ -113,7 +154,6 @@ Screens.purchases = {
         this.drawCart();
       } else if (t.id === 'purPayType'){
         this.payType = t.value;
-        /* خانة المدفوع في حالة الآجل فارغة لسهولة تحديد المبلغ */
         this.paid = this.payType === 'credit' ? null : this.total();
         this.drawCart();
       } else if (t.id === 'payPlanSelect'){
@@ -140,12 +180,55 @@ Screens.purchases = {
       } else if (t.dataset.f && this.cart[t.dataset.id]){
         this.cart[t.dataset.id][t.dataset.f] = parseFloat(t.value) || 0;
         if (t.dataset.f === 'cost') t.classList.toggle('bad', !(this.cart[t.dataset.id].cost > 0));
-        else UI.mark(this.$('grid'), t.dataset.id, this.cart[t.dataset.id].qty);
+        else this.drawSelected();
       }
       this.drawTotals();
     };
-    this.drawGrid();
+    this.drawSelected();
     this.drawCart();
+  },
+
+  updatePredictions(){
+    const predList = this.$('predList');
+    if (!predList) return;
+    const q = this.q.trim();
+    if (!q){
+      predList.classList.add('hide');
+      predList.innerHTML = '';
+      this.drawSelected();
+      return;
+    }
+    const matches = UI.filterProducts(DB.list('products'), q);
+    predList.classList.remove('hide');
+    predList.innerHTML = matches.length
+      ? matches.slice(0, 12).map(p =>
+          '<button type="button" class="pred-item' + (this.selectedId === p.id ? ' active' : '') + '" data-pick-id="' + p.id + '">' +
+            '<span class="pred-name">' + DB.esc(p.name) + ' <small>(' + DB.esc(p.code) + ')</small></span>' +
+            '<span class="pred-meta">شراء: ' + DB.money(p.buy || 0) + ' • متاح: ' + DB.round(p.qty) + '</span>' +
+          '</button>'
+        ).join('')
+      : '<div class="pred-empty">لا يوجد صنف مطابق — يمكنك إضافته من زر (+ صنف)</div>';
+
+    if (matches.length === 1){
+      this.selectedId = matches[0].id;
+    }
+    this.drawSelected();
+  },
+
+  drawSelected(){
+    const zone = this.$('selectedZone');
+    if (!zone) return;
+    const p = this.selectedId ? DB.getProduct(this.selectedId) : null;
+    if (!p){
+      zone.innerHTML = '<div class="box" style="text-align:center;opacity:.85;padding:14px">' +
+        'اختر الصنف المطلوب من <b>القائمة المنسدلة</b> أو اكتب اسمه في <b>خانة التنبؤ</b> ليظهر هنا وتتم إضافته للفاتورة.' +
+      '</div>';
+      return;
+    }
+    zone.innerHTML = '<div style="margin-bottom:8px">' +
+      '<div class="hint" style="margin-bottom:4px">الصنف المحدد حالياً (اضغط لزيادة الكمية):</div>' +
+      UI.card(p, false, this.cart[p.id] ? this.cart[p.id].qty : 0) +
+    '</div>';
   },
 
   openQuickAddItem(){
@@ -154,11 +237,23 @@ Screens.purchases = {
     const m = UI.modal('<h2>إضافة صنف للفاتورة</h2>' +
       '<div class="codebox">' + DB.esc(code) + '</div>' +
       '<label>اسم الصنف</label><input class="inp" id="qn" value="' + DB.esc(qName) + '" placeholder="مثال: سكر 1 كجم">' +
+      '<div id="dupWarn" class="hint" style="color:var(--bad);font-weight:800"></div>' +
       '<label>سعر الشراء (سعر الوحدة)</label><input class="inp" id="qb" type="number" inputmode="decimal" step="any" placeholder="0">' +
       '<label>سعر البيع</label><input class="inp" id="qs" type="number" inputmode="decimal" step="any" placeholder="0">' +
       '<label>الكمية المبدئية (العدد)</label><input class="inp" id="qq" type="number" inputmode="decimal" step="any" value="1">' +
       '<button class="btn ok" id="qsave">حفظ وإضافة للفاتورة</button>' +
       '<button class="btn gray" id="qcancel">إلغاء</button>');
+
+    const checkDup = () => {
+      const val = m.querySelector('#qn').value;
+      const dup = DB.findDuplicateProduct(val, code);
+      m.querySelector('#dupWarn').textContent = dup
+        ? 'تنبيه: هذا الصنف مسجل مسبقاً باسم «' + dup.name + '» (' + dup.code + ')!'
+        : '';
+    };
+    m.querySelector('#qn').oninput = checkDup;
+    checkDup();
+
     m.querySelector('#qcancel').onclick = () => m.close();
     m.querySelector('#qsave').onclick = () => {
       const name = m.querySelector('#qn').value.trim();
@@ -166,21 +261,24 @@ Screens.purchases = {
       const price = parseFloat(m.querySelector('#qs').value);
       const qty = Math.max(1, parseFloat(m.querySelector('#qq').value) || 1);
       if (!name || isNaN(price)) return UI.toast('اكتب اسم الصنف وسعر البيع', true);
-      const prod = DB.addProduct({ code, name, img:'', buy:cost, price, qty:0, min:5 });
-      this.cart[prod.id] = { qty, cost, buyPrice:cost };
+
+      const res = DB.addProduct({ code, name, img:'', buy:cost, price, qty:0, min:5 });
+      if (res && res.error){
+        UI.toast(res.error, true);
+        if (res.duplicate){
+          this.selectedId = res.duplicate.id;
+          this.cart[res.duplicate.id] = { qty, cost: cost || res.duplicate.buy || 0, buyPrice: res.duplicate.buy || 0 };
+          m.close();
+          this.render(document.getElementById('app'));
+        }
+        return;
+      }
+      this.selectedId = res.id;
+      this.cart[res.id] = { qty, cost, buyPrice:cost };
       m.close();
-      this.drawGrid();
-      this.drawCart();
+      this.render(document.getElementById('app'));
       UI.toast('تمت إضافة الصنف');
     };
-  },
-
-  drawGrid(){
-    const q = this.q.trim().toLowerCase();
-    const list = DB.list('products').filter(p => !q || p.name.toLowerCase().includes(q) || String(p.code).toLowerCase().includes(q));
-    this.$('grid').innerHTML = list.length
-      ? list.map(p => UI.card(p, false, this.cart[p.id] ? this.cart[p.id].qty : 0)).join('')
-      : '<p class="big">لا توجد أصناف</p>';
   },
 
   add(id){
@@ -189,11 +287,9 @@ Screens.purchases = {
     if (this.ret && (cur ? cur.qty : 0) + 1 > p.qty) return UI.toast('الكمية لا تكفي للمرتجع', true);
     if (cur) cur.qty = DB.round(cur.qty + 1);
     else this.cart[id] = { qty:1, cost:p.buy || 0, buyPrice:p.buy || 0 };
-    UI.mark(this.$('grid'), id, this.cart[id].qty);
     this.drawCart();
   },
 
-  /* في حالة الآجل تظل خانة المدفوع فارغة لسهولة تحديد المبلغ */
   defPaid(t){
     if (this.ret){
       if (this.returnPayMethod === 'credit') return 0;
@@ -279,7 +375,7 @@ Screens.purchases = {
           '</div>' +
           (s ? '<p class="big" style="font-size:.95rem;margin:6px 0 0">' + UI.balText('suppliers', s.balance) + (s.phone ? ' | ' + DB.esc(s.phone) : '') + '</p>' : '') +
         '</div>' +
-        (rows || '<p class="big">اضغط على صورة الصنف لإضافته</p>') +
+        (rows || '<p class="big">اختر الصنف من القائمة المنسدلة أو التنبؤ لإضافته</p>') +
         '<div class="box" id="summaryBox" style="margin:10px 0"></div>' +
         '<label>طريقة الاستلام / الدفع (قائمة منسدلة)</label>' +
         '<select class="inp" id="retPayMethod">' +
@@ -305,7 +401,7 @@ Screens.purchases = {
           '</div>' +
           (s ? '<p class="big" style="font-size:.95rem;margin:6px 0 0">' + UI.balText('suppliers', s.balance) + (s.phone ? ' | ' + DB.esc(s.phone) : '') + '</p>' : '') +
         '</div>' +
-        (rows || '<p class="big">اضغط على صورة الصنف لإضافته</p>') +
+        (rows || '<p class="big">اختر الصنف من القائمة المنسدلة أو التنبؤ لإضافته</p>') +
         '<div class="box" id="summaryBox" style="margin:10px 0"></div>' +
         '<label>نوع الشراء (قائمة منسدلة)</label>' +
         '<select class="inp" id="purPayType">' +
@@ -340,7 +436,6 @@ Screens.purchases = {
     const rem = DB.round(Math.max(0, t - paid));
 
     if (this.paid === null && this.$('paid')){
-      /* في حالة الآجل تظل خانة المدفوع فارغة */
       this.$('paid').value = isCredit ? '' : (paid || '');
     }
 

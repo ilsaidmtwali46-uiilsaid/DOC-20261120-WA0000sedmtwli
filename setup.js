@@ -30,16 +30,17 @@ const Setup = {
     el.innerHTML = head +
       '<div class="box"><h2>1) فلوس الخزنة الآن</h2>' +
         '<input class="inp" id="cash" type="number" inputmode="decimal" step="any" placeholder="0" value="' + DB.esc(this.d.cash) + '"></div>' +
-      '<div class="box"><h2>2) الأصناف الموجودة</h2>' +
+      '<div class="box"><h2>2) الأصناف الموجودة (بدون تكرار)</h2>' +
         '<div class="codebox" id="pcode"></div>' +
-        '<img id="pprev" class="preview hide" alt="">' +
+        '<div id="imgStatus" class="hint" style="margin-bottom:6px">صورة الصنف (تظهر في معرض المنتجات فقط): غير مرفقة</div>' +
         '<div class="row">' +
-          '<button class="btn warn" id="shoot">تصوير</button>' +
-          '<button class="btn gray" id="pick">اختيار صورة</button>' +
+          '<button class="btn warn" id="shoot">تصوير للمعرض</button>' +
+          '<button class="btn gray" id="pick">اختيار صورة للمعرض</button>' +
         '</div>' +
         '<input type="file" id="f1" accept="image/*" capture="environment" class="hide">' +
         '<input type="file" id="f2" accept="image/*" class="hide">' +
         '<label>اسم الصنف</label><input class="inp" id="pn">' +
+        '<div id="dupWarn" class="hint" style="color:var(--bad);font-weight:800"></div>' +
         '<label>سعر الشراء</label><input class="inp" id="pb" type="number" inputmode="decimal" step="any">' +
         '<label>سعر البيع</label><input class="inp" id="ps" type="number" inputmode="decimal" step="any">' +
         '<label>الكمية</label><input class="inp" id="pq" type="number" inputmode="decimal" step="any">' +
@@ -58,8 +59,8 @@ const Setup = {
       const f = e.target.files[0]; if (!f) return;
       try {
         this.img = await DB.compressImage(f);
-        $('pprev').src = this.img;
-        $('pprev').classList.remove('hide');
+        $('imgStatus').innerHTML = 'صورة الصنف (تظهر في معرض المنتجات فقط): <b style="color:var(--ok)">مرفقة بنجاح</b>';
+        UI.toast('تم حفظ الصورة للمعرض');
       } catch(x){ UI.toast('تعذر قراءة الصورة', true); }
       e.target.value = '';
     };
@@ -77,12 +78,21 @@ const Setup = {
     };
     showCode(); drawProducts();
 
+    $('pn').oninput = () => {
+      const dup = DB.findDuplicateProduct($('pn').value, '', null, this.d.products);
+      $('dupWarn').textContent = dup ? 'تنبيه: هذا الصنف مضاف بالفعل: «' + dup.name + '»' : '';
+    };
+
     $('padd').onclick = () => {
       const name = $('pn').value.trim(), price = parseFloat($('ps').value);
       if (!name || isNaN(price)) return UI.toast('اكتب اسم الصنف وسعر البيع', true);
+      const code = DB.generateProductCode(this.d.products);
+      const dup = DB.findDuplicateProduct(name, code, null, this.d.products);
+      if (dup) return UI.toast('هذا الصنف مكرر: ' + dup.name, true);
+
       this.d.products.push({
         id: DB.newId('p'),
-        code: DB.generateProductCode(this.d.products),
+        code,
         name, img: this.img,
         buy: parseFloat($('pb').value) || 0,
         price,
@@ -91,7 +101,8 @@ const Setup = {
       });
       if (!this.save()){ this.d.products.pop(); return; }
       this.img = '';
-      $('pprev').classList.add('hide');
+      $('imgStatus').textContent = 'صورة الصنف (تظهر في معرض المنتجات فقط): غير مرفقة';
+      $('dupWarn').textContent = '';
       ['pn','pb','ps','pq'].forEach(i => $(i).value = '');
       $('pm').value = 5;
       drawProducts(); showCode();

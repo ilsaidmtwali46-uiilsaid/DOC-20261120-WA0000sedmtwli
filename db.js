@@ -59,10 +59,32 @@ const DB = {
   },
   round(n){ return Math.round((Number(n)||0)*100)/100; },
 
-  /* FIX-09: حذف الأصفار الزائدة بشكل صحيح */
   money(n){
     const v = this.round(n);
     return (Number.isInteger(v) ? v : v.toFixed(2).replace(/\.?0+$/,'')) + ' جنيه';
+  },
+
+  normName(s){
+    return String(s == null ? '' : s)
+      .trim()
+      .toLowerCase()
+      .replace(/[\u064B-\u065F\u0670]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي')
+      .replace(/\s+/g, ' ');
+  },
+
+  findDuplicateProduct(name, code, ignoreId, customList){
+    const list = customList || this.list('products');
+    const nn = this.normName(name);
+    const nc = String(code || '').trim().toLowerCase();
+    return list.find(p => {
+      if (ignoreId && p.id === ignoreId) return false;
+      if (nn && this.normName(p.name) === nn) return true;
+      if (nc && String(p.code || '').trim().toLowerCase() === nc) return true;
+      return false;
+    }) || null;
   },
 
   partyName(key, id, fallback){
@@ -171,17 +193,29 @@ const DB = {
     return 'PRD-' + (max + 1);
   },
   getProduct(id){ return this.list('products').find(p => p.id === id); },
+
   addProduct(p){
     const all = this.list('products');
+    p.name = String(p.name || '').trim();
+    p.code = String(p.code || '').trim() || this.generateProductCode(all);
+    const dup = this.findDuplicateProduct(p.name, p.code, null, all);
+    if (dup) return { error: 'هذا الصنف مسجل بالفعل: ' + dup.name + ' (' + dup.code + ')', duplicate: dup };
     p.id = p.id || this.newId('p');
-    p.code = p.code || this.generateProductCode(all);
-    all.push(p); this.save('products', all); return p;
+    all.push(p);
+    this.save('products', all);
+    return p;
   },
+
   updateProduct(id, changes){
     const all = this.list('products'), i = all.findIndex(p => p.id === id);
-    if (i < 0) return null;
-    Object.assign(all[i], changes);
-    this.save('products', all); return all[i];
+    if (i < 0) return { error: 'الصنف غير موجود' };
+    const nextName = changes.name !== undefined ? String(changes.name).trim() : all[i].name;
+    const nextCode = changes.code !== undefined ? String(changes.code).trim() : all[i].code;
+    const dup = this.findDuplicateProduct(nextName, nextCode, id, all);
+    if (dup) return { error: 'يوجد صنف آخر بنفس الاسم أو الكود: ' + dup.name + ' (' + dup.code + ')', duplicate: dup };
+    Object.assign(all[i], changes, { name: nextName, code: nextCode });
+    this.save('products', all);
+    return all[i];
   },
 
   addSupplier(s){
@@ -226,7 +260,6 @@ const DB = {
     return this.round(n);
   },
 
-  /* دعم الدفعة المقدمة في البيع الآجل */
   completeSale(items, type, customerId, meta){
     return this.atomic(() => {
       if (!items || !items.length) return { error: 'الفاتورة فارغة' };
@@ -262,11 +295,11 @@ const DB = {
       if (type !== 'cash' && rem > 0) this.addBalance('customers', customerId, rem);
 
       const sales = this.list('sales');
-      const sale = Object.assign({}, m, {
+      const sale = Object.assign({
         id:this.newId('sale'), date:new Date().toISOString(),
         type, customerId:customerId||null, items:lines, total,
         paid: paidNow, remaining: rem
-      });
+      }, m);
       sales.push(sale); this.save('sales', sales);
       return { sale };
     });
@@ -278,21 +311,15 @@ const DB = {
       if (type !== 'cash' && !this.list('customers').some(c => c.id === customerId)) return { error: 'العميل غير موجود' };
       if (customerId){
         const sales = this.list('sales');
-        const soldQty = new Map();
-        sales.filter(s => s.customerId === customerId).forEach(s => {
-          const sign = s.isReturn ? -1 : 1;
-          (s.items || []).forEach(i => {
-            soldQty.set(i.productId, (soldQty.get(i.productId) || 0) + sign * (Number(i.qty) || 0));
-          });
+        const soldIds = new Set();
+        sales.filter(s => !s.isReturn && s.customerId === customerId)
+             .forEach(s => (s.items || []).forEach(i => soldIds.add(i.productId)));
+        const notOwned = items.filter(it => !soldIds.has(it.id)).map(it => {
+          const p = this.getProduct(it.id);
+          return p ? p.name : it.id;
         });
-        const requestedQty = new Map();
-        items.forEach(it => requestedQty.set(it.id, (requestedQty.get(it.id) || 0) + (Number(it.qty) || 0)));
-        for (const [productId, qty] of requestedQty){
-          const available = this.round(soldQty.get(productId) || 0);
-          if (!(qty > 0) || qty > available){
-            const p = this.getProduct(productId);
-            return { error: 'كمية المرتجع أكبر من صافي المباع لهذا العميل: ' + (p ? p.name : productId) };
-          }
+        if (notOwned.length){
+          return { error: 'هذه الأصناف لم تُبع لهذا العميل: ' + notOwned.join('، ') };
         }
       }
       const prods = this.list('products');
@@ -320,10 +347,10 @@ const DB = {
       if (type === 'cash') this.addCash(-total);
       else this.addBalance('customers', customerId, -total);
       const a = this.list('sales');
-      const r = Object.assign({}, meta || {}, {
+      const r = Object.assign({
         id:this.newId('ret'), date:new Date().toISOString(),
         isReturn:true, type, customerId:customerId||null, items:lines, total
-      });
+      }, meta || {});
       a.push(r); this.save('sales', a);
       return { sale: r };
     });
@@ -353,16 +380,15 @@ const DB = {
       paid = this.round(paid);
       if (paid < 0 || paid > total) return { error: 'المبلغ المدفوع غير صحيح' };
       if (paid < total && !supplierId) return { error: 'اختر المورد لتسجيل الباقي عليه' };
-      if (meta && meta.paymentPlan === 'cash' && paid !== total) return { error: 'الشراء النقدي يتطلب سداد إجمالي الفاتورة' };
       if (paid > this.getCash()) return { error: 'رصيد الخزنة لا يكفي.' };
       this.save('products', prods);
       if (paid > 0) this.addCash(-paid);
       if (supplierId) this.addBalance('suppliers', supplierId, total - paid);
       const a = this.list('purchases');
-      const pur = Object.assign({}, meta || {}, {
+      const pur = Object.assign({
         id:this.newId('pur'), date:new Date().toISOString(),
         supplierId:supplierId||null, items:lines, total, paid, received:0
-      });
+      }, meta || {});
       a.push(pur); this.save('purchases', a);
       return { purchase: pur };
     });
@@ -395,11 +421,11 @@ const DB = {
       if (received > 0) this.addCash(received);
       if (supplierId) this.addBalance('suppliers', supplierId, -(total - received));
       const a = this.list('purchases');
-      const r = Object.assign({}, meta || {}, {
+      const r = Object.assign({
         id:this.newId('pret'), date:new Date().toISOString(),
         isReturn:true, supplierId:supplierId||null, items:lines,
         total, received
-      });
+      }, meta || {});
       a.push(r); this.save('purchases', a);
       return { purchase: r };
     });
