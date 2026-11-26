@@ -18,11 +18,12 @@ window.makeParties = function(cfg){
 
     draw(){
       const q = this.q.trim().toLowerCase(), all = this.all();
-      const sum = DB.round(all.reduce((s, x) => s + (x.balance || 0), 0));
+      const sum = DB.round(all.reduce((s, x) => s + Math.max(0, x.balance || 0), 0));
+      const credits = DB.round(all.reduce((s, x) => s + Math.max(0, -(x.balance || 0)), 0));
       const list = all.filter(x => !q || (x.name + ' ' + (x.phone || '')).toLowerCase().includes(q));
-      $('list').innerHTML = `<div class="box big">${cfg.sumLabel}: ${DB.money(sum)}</div>` +
+      $('list').innerHTML = `<div class="box big">${cfg.sumLabel}: ${DB.money(sum)}${credits > 0 ? '<br><small>أرصدة دائنة (بسبب مرتجعات أو دفعات زائدة): ' + DB.money(credits) + '</small>' : ''}</div>` +
         (list.map(x => `<button class="btn" data-id="${x.id}" style="background:var(--${(x.balance || 0) > 0 ? 'warn' : 'ok'})">
-          ${DB.esc(x.name)}<br><small>${cfg.balLabel}: ${DB.money(x.balance)}</small></button>`).join('') || '<p class="big">لا يوجد أحد بعد</p>');
+          ${DB.esc(x.name)}<br><small>${UI.balText(cfg.key, x.balance)}</small></button>`).join('') || '<p class="big">لا يوجد أحد بعد</p>');
     },
 
     ops(id){
@@ -44,7 +45,7 @@ window.makeParties = function(cfg){
       const x = this.all().find(i => i.id === id);
       if (!x) return;
       const m = UI.modal(`<h2>${DB.esc(x.name)}</h2>
-        <div class="total" style="font-size:2rem">${cfg.balLabel}: ${DB.money(x.balance)}</div>
+        <div class="total" style="font-size:${(x.balance || 0) < 0 ? '1.4rem' : '2rem'}">${UI.balText(cfg.key, x.balance)}</div>
         <p>${DB.esc(x.phone || '')} ${DB.esc(x.address || '')}<br>${DB.esc(x.notes || '')}</p>
         <button class="btn ok" id="pay">💵 ${cfg.payLabel}</button>
         ${x.phone ? `<a class="btn" style="display:block;text-align:center;text-decoration:none;padding-top:16px" href="tel:${DB.esc(x.phone)}">📞 اتصال</a>` : ''}
@@ -58,7 +59,7 @@ window.makeParties = function(cfg){
     },
 
     pay(x, m){
-      const p = UI.modal(`<h2>${cfg.payLabel}</h2><p class="big">${cfg.balLabel}: ${DB.money(x.balance)}</p>
+      const p = UI.modal(`<h2>${cfg.payLabel}</h2><p class="big">${UI.balText(cfg.key, x.balance)}</p>
         <input class="inp" id="amt" type="number" inputmode="decimal" step="any" placeholder="المبلغ">
         <button class="btn ok" id="go">✅ تأكيد</button><button class="btn gray" id="no">رجوع</button>`);
       p.querySelector('#no').onclick = () => p.close();
@@ -68,6 +69,7 @@ window.makeParties = function(cfg){
         const cur = this.all().find(i => i.id === x.id);
         if (!cur) return UI.toast('غير موجود', true);
         if (a > (Number(cur.balance) || 0)) return UI.toast('المبلغ أكبر من الرصيد', true);
+        if (cfg.cashSign < 0 && a > DB.getCash()) return UI.toast('رصيد الخزنة لا يكفي (المتاح ' + DB.money(DB.getCash()) + ')', true);
         const res = DB.atomic(() => {
           if (!DB.addBalance(cfg.key, x.id, -a)) return { error: 'تعذر تحديث الرصيد' };
           DB.addCash(cfg.cashSign * a);

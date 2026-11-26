@@ -19,6 +19,7 @@ const DB = {
       if (this._tx && !(k in this._tx)) this._tx[k] = localStorage.getItem(k);
       localStorage.setItem(k, JSON.stringify(v));
       this.checkStorageDebounced();
+      if (window.Disk && this.isDataKey(k)) Disk.touch();
       return true;
     } catch(e){
       if (this._tx) this._txFail = true;           // داخل عملية: نتراجع ونعرض رسالة واحدة من الشاشة
@@ -93,10 +94,11 @@ const DB = {
   /* مفاتيح البيانات التي تدخل في النسخة الاحتياطية (بدون التفعيل ورقم الجهاز) */
   isDataKey(k){
     return typeof k === 'string' && k.startsWith('gs_') &&
-      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId && k !== this.K.licenseT;
+      k !== this.K.license && k !== this.K.device && k !== this.K.licenseId && k !== this.K.licenseT && !k.startsWith('gs_fs_');
   },
 
-  exportBackup(){
+  /* لقطة كاملة من بيانات المحل (تُستخدم في النسخة الاحتياطية والحفظ على الجهاز) */
+  snapshot(){
     const data = {};
     for (let i = 0; i < localStorage.length; i++){
       const k = localStorage.key(i);
@@ -105,7 +107,11 @@ const DB = {
         catch(e){ data[k] = localStorage.getItem(k); }
       }
     }
-    const blob = new Blob([JSON.stringify({v:1, at:new Date().toISOString(), data}, null, 2)], {type:'application/json'});
+    return { v:1, at:new Date().toISOString(), data };
+  },
+
+  exportBackup(){
+    const blob = new Blob([JSON.stringify(this.snapshot(), null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const d = new Date();
@@ -120,15 +126,11 @@ const DB = {
     if (window.UI) UI.toast('تم تجهيز النسخة الاحتياطية ✔');
   },
 
-  async importBackup(file){
-    const text = await file.text();
-    const obj = JSON.parse(text);
+  /* استبدال كل بيانات المحل بمحتوى نسخة (مع التراجع لو فشل الحفظ) */
+  restoreObject(obj){
     if (!obj || obj.v !== 1 || !obj.data || typeof obj.data !== 'object') throw new Error('ملف غير صالح');
     const keys = Object.keys(obj.data).filter(k => this.isDataKey(k));
     if (!keys.length) throw new Error('ملف غير صالح');
-    if (!await UI.confirm('سيتم استبدال كل البيانات الحالية. متأكد؟', 'نعم، استعد', 'إلغاء')) return false;
-
-    // نحفظ الحالية للتراجع لو فشلت الاستعادة، ثم نمسحها كلها حتى لا يختلط القديم بالجديد
     const old = {};
     for (let i = 0; i < localStorage.length; i++){
       const k = localStorage.key(i);
@@ -143,6 +145,13 @@ const DB = {
       throw new Error('full');
     }
     return true;
+  },
+
+  async importBackup(file){
+    const obj = JSON.parse(await file.text());
+    if (!obj || obj.v !== 1 || !obj.data || typeof obj.data !== 'object') throw new Error('ملف غير صالح');
+    if (!await UI.confirm('سيتم استبدال كل البيانات الحالية. متأكد؟', 'نعم، استعد', 'إلغاء')) return false;
+    return this.restoreObject(obj);
   },
 
   isSetupDone(){ return this.get(this.K.setup, false) === true; },
@@ -198,6 +207,24 @@ const DB = {
     return !!(sales || purs || pays);
   },
 
+  lastSaleLine(productId){
+    const sales = this.list('sales');
+    for (let i = sales.length - 1; i >= 0; i--){
+      const s = sales[i];
+      if (s.isReturn) continue;
+      const l = (s.items || []).find(x => x.productId === productId);
+      if (l) return l;
+    }
+    return null;
+  },
+  netSold(productId){
+    let n = 0;
+    this.list('sales').forEach(s => (s.items || []).forEach(l => {
+      if (l.productId === productId) n += (s.isReturn ? -1 : 1) * (Number(l.qty) || 0);
+    }));
+    return this.round(n);
+  },
+
   /* ============ المبيعات ============ */
   completeSale(items, type, customerId){
     return this.atomic(() => {
@@ -222,7 +249,8 @@ const DB = {
       if (type === 'cash') this.addCash(total);
       else this.addBalance('customers', customerId, total);
       const sales = this.list('sales');
-      const sale = { id:this.newId('sale'), date:new Date().toISOString(), type, customerId:customerId||null, items:lines, total };
+      const sale = Object.assign({ id:this.newId('sale'), date:new Date().toISOString(), type, customerId:customerId||null, items:lines, total }, (typeof type === 'object' ? {} : {}));
+      if (arguments[3] && typeof arguments[3] === 'object') Object.assign(sale, arguments[3]);
       sales.push(sale); this.save('sales', sales);
       return { sale };
     });
@@ -239,17 +267,23 @@ const DB = {
         if (!(qty > 0)) return { error: 'كمية غير صحيحة' };
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
+        const last = this.lastSaleLine(p.id);
+        const hasPrice = it.price !== undefined && it.price !== null && it.price !== '' && Number(it.price) >= 0;
+        const price = hasPrice ? Number(it.price) : (last ? Number(last.price) : p.price);
+        const cost = last ? last.cost : p.buy;
         p.qty = this.round((Number(p.qty) || 0) + qty);
-        total += p.price * qty;
-        lines.push({ productId:p.id, code:p.code, name:p.name, qty, price:p.price, cost:p.buy });
+        total += price * qty;
+        lines.push({ productId:p.id, code:p.code, name:p.name, qty, price, cost });
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);
+      if (type === 'cash' && total > this.getCash()) return { error: 'رصيد الخزنة لا يكفي لرد المبلغ (المتاح ' + this.money(this.getCash()) + ')' };
       this.save('products', prods);
       if (type === 'cash') this.addCash(-total);
       else this.addBalance('customers', customerId, -total);
       const a = this.list('sales');
       const r = { id:this.newId('ret'), date:new Date().toISOString(), isReturn:true, type, customerId:customerId||null, items:lines, total };
+      if (arguments[3] && typeof arguments[3] === 'object') Object.assign(r, arguments[3]);
       a.push(r); this.save('sales', a);
       return { sale: r };
     });
@@ -280,6 +314,7 @@ const DB = {
       paid = this.round(paid);
       if (paid < 0 || paid > total) return { error: 'المبلغ المدفوع غير صحيح' };
       if (paid < total && !supplierId) return { error: 'اختر المورد لتسجيل الباقي عليه' };
+      if (paid > this.getCash()) return { error: 'رصيد الخزنة لا يكفي (المتاح ' + this.money(this.getCash()) + '). قلّل المبلغ المدفوع واترك الباقي على المورد.' };
       this.save('products', prods);
       this.addCash(-paid);
       if (supplierId) this.addBalance('suppliers', supplierId, total - paid);
@@ -305,9 +340,10 @@ const DB = {
         const p = prods.find(x => x.id === it.id);
         if (!p) { missing.push(it.id); continue; }
         if ((Number(p.qty) || 0) < qty) return { error: 'كمية المرتجع أكبر من الموجود: ' + p.name };
+        const buyPrice = it.buyPrice !== undefined ? Number(it.buyPrice) : (Number(p.buy) || 0);
         p.qty = this.round((Number(p.qty) || 0) - qty);
         total += cost * qty;
-        lines.push({ productId:p.id, name:p.name, qty, cost });
+        lines.push({ productId:p.id, name:p.name, qty, cost, buyPrice });
       }
       if (missing.length) return { error: 'أصناف غير موجودة في المخزون', missing };
       total = this.round(total);

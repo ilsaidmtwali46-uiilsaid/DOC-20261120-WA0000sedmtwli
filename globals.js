@@ -23,6 +23,13 @@ window.UI = {
     });
   },
 
+  /* نص رصيد عميل/مورد: الموجب = دين، والسالب = رصيد دائن (بدل عرض رقم سالب غامض) */
+  balText(kind, v){
+    v = DB.round(v);
+    if (kind === 'customers') return v >= 0 ? 'عليه لنا: ' + DB.money(v) : 'رصيد دائن له عندنا: ' + DB.money(-v);
+    return v >= 0 ? 'له علينا: ' + DB.money(v) : 'رصيد دائن لنا عنده: ' + DB.money(-v);
+  },
+
   /* بطاقة صنف: inCart = الكمية المضافة للفاتورة (تظهر علامة ✔ فوق البطاقة) */
   card(p, withDel, inCart){
     const q = Number(p.qty) || 0;
